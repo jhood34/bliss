@@ -1,5 +1,5 @@
 import RAPIER from "./node_modules/@dimforge/rapier3d-compat/rapier.es.js";
-import { FBXLoader } from "three/examples/jsm/loaders/FBXLoader.js";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 
 const PHYSICS_INIT_TIMEOUT_MS = 2200;
 const PHYSICS_FIXED_TIMESTEP = 1 / 60;
@@ -20,6 +20,12 @@ const tuningPanel = document.querySelector("#tuning-panel");
 const fpsMeter = document.querySelector("#fps-meter");
 const fpsValue = document.querySelector("#fps-value");
 const fpsBar = document.querySelector("#fps-bar");
+const qualityControl = document.querySelector("#quality-control");
+const qualitySlider = document.querySelector("#quality-slider-input");
+const qualitySliderWrap = document.querySelector("#quality-slider-wrap");
+const qualityOutput = document.querySelector("#quality-output");
+const qualitySteps = document.querySelector("#quality-steps");
+const tuningToggle = document.querySelector("#tuning-toggle");
 const exportStatus = document.querySelector("#export-status");
 const settingsOutput = document.querySelector("#settings-output");
 const tuningControls = {
@@ -32,6 +38,7 @@ const tuningControls = {
   fogColor: document.querySelector("#fog-color-control"),
   fogDensity: document.querySelector("#fog-density-control"),
   windStrength: document.querySelector("#wind-strength-control"),
+  showFps: document.querySelector("#show-fps-control"),
   exportSettings: document.querySelector("#export-settings")
 };
 
@@ -44,19 +51,32 @@ const sceneSettings = {
   skyColor: "#5fa6ff",
   fogColor: "#e0efff",
   fogDensity: 0.0072,
-  windStrength: 1
+  windStrength: 1,
+  qualityLevel: 3
 };
+
+const QUALITY_PRESETS = [
+  null,
+  { name: "Low", renderScale: 0.62, minScale: 0.56, maxScale: 0.68, grassDistance: 0.58, highDensityDistance: 0.52, cloudSteps: 16 },
+  { name: "Balanced", renderScale: 0.74, minScale: 0.62, maxScale: 0.8, grassDistance: 0.76, highDensityDistance: 0.72, cloudSteps: 32 },
+  { name: "Medium", renderScale: 0.85, minScale: 0.68, maxScale: 0.92, grassDistance: 1, highDensityDistance: 1, cloudSteps: 48 },
+  { name: "High", renderScale: 0.95, minScale: 0.76, maxScale: 1, grassDistance: 1, highDensityDistance: 1.15, cloudSteps: 64 },
+  { name: "Ultra", renderScale: 1, minScale: 0.86, maxScale: 1, grassDistance: 1, highDensityDistance: 1.3, cloudSteps: 80 }
+];
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(sceneSettings.skyColor);
 scene.fog = new THREE.FogExp2(sceneSettings.fogColor, sceneSettings.fogDensity);
 
-const camera = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerHeight, 0.1, 700);
+const DEFAULT_CAMERA_FOV = 72 * 0.65;
+const camera = new THREE.PerspectiveCamera(DEFAULT_CAMERA_FOV, window.innerWidth / window.innerHeight, 0.1, 700);
 camera.rotation.order = "YXZ";
 
 // Recent world-space car footprints are passed straight to the grass shader.
 const TRAIL_STAMP_DISTANCE = 0.65;
-const MAX_SHADER_TRAIL_STAMPS = 72;
+// Keeping the most recent stamps makes the interaction feel immediate without
+// paying for a 72-iteration loop in every grass vertex.
+const MAX_SHADER_TRAIL_STAMPS = 12;
 let lastTrailPoint = new THREE.Vector3(0, -9999, 0);
 const trailStamps = [];
 const trailStampPositionRightUniforms = Array.from({ length: MAX_SHADER_TRAIL_STAMPS }, () => new THREE.Vector4(0, 0, 1, 0));
@@ -73,7 +93,14 @@ const renderer = new THREE.WebGLRenderer({
 setRendererColorSpace(renderer);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.04;
-renderer.setPixelRatio(1);
+const renderQuality = {
+  scale: 0.85,
+  minScale: 0.68,
+  maxScale: 0.92,
+  sampleTime: 0,
+  sampleFrames: 0
+};
+renderer.setPixelRatio(renderQuality.scale);
 renderer.setSize(window.innerWidth, window.innerHeight, false);
 
 const textureLoader = new THREE.TextureLoader();
@@ -116,6 +143,10 @@ let grassTrail = [];
 let grassTrailCount = 0;
 
 let carGroup = null;
+let carVisualRoot = null;
+let loadedCarQualityLevel = 0;
+let pendingCarQualityLevel = 0;
+let carModelRequestId = 0;
 let carSpeed = 0;
 const carMaxSpeed = 45;
 const carAcceleration = 20;
@@ -133,7 +164,22 @@ const clock = new THREE.Clock();
 const forward = new THREE.Vector3();
 const right = new THREE.Vector3();
 const move = new THREE.Vector3();
+const cameraFollow = {
+  vehicleYaw: 0,
+  initialized: false,
+  target: new THREE.Vector3()
+};
+const cameraZoom = {
+  distance: 12,
+  targetDistance: 12,
+  fov: DEFAULT_CAMERA_FOV,
+  targetFov: DEFAULT_CAMERA_FOV
+};
+const cameraDesiredPosition = new THREE.Vector3();
+const cameraDesiredTarget = new THREE.Vector3();
+const cameraPlanarForward = new THREE.Vector3();
 const clouds = [];
+const cloudMaterials = [];
 const grassMaterials = [];
 const followGrassLayers = [];
 const grassDrawLayers = [];
@@ -142,6 +188,8 @@ let distantGrassMaterial = null;
 let lastDistantGrassSnapX = -99999;
 let lastDistantGrassSnapZ = -99999;
 let grassGLBGeometry = null;
+let grassQualityDistance = 1;
+let highDensityGrassDistance = 1;
 const grassVisibilityFrustum = new THREE.Frustum();
 const grassProjectionMatrix = new THREE.Matrix4();
 const grassLayerCenter = new THREE.Vector3();
@@ -211,6 +259,7 @@ async function startScene() {
   document.addEventListener("mousemove", handleMouseLook);
 
   canvas.addEventListener("click", lockPointer);
+  canvas.addEventListener("wheel", handleCameraZoom, { passive: false });
   // canvas.addEventListener("touchstart", handleTouchStart, { passive: false });
   // canvas.addEventListener("touchmove", handleTouchMove, { passive: false });
   // canvas.addEventListener("touchend", handleTouchEnd, { passive: false });
@@ -218,25 +267,43 @@ async function startScene() {
 
   wallpaperEntry.addEventListener("click", lockPointer);
   initializeTuningPanel();
+  initializeQualityControl();
 
   animate();
 }
 
 // ============================================================================
-// START 3D TRUCK + RAPIER VEHICLE LOGIC
+// START 3D CAR + RAPIER VEHICLE LOGIC
 // ============================================================================
-const TRUCK_MODEL_PATH = "car/Lowpoly_Truck_1.1/Truck 2.0.fbx";
-const TRUCK_TEXTURE_PATH = "car/Lowpoly_Truck_1.1/Truck.png";
-const TRUCK_SCALE = 1;
-const TRUCK_FRONT_Z = -2.6664;
-const TRUCK_REAR_Z = 2.1078;
-const TRUCK_HALF_TRACK = 1.2997;
-const TRUCK_WHEEL_Y = 0.8537;
-const TRUCK_WHEEL_RADIUS = 0.8;
-const TRUCK_WHEEL_BASE_YAW = Math.PI;
+const CAR_MODEL_PATH = "car/toyota_levin_ae85_grandfather/scene.gltf";
+const CAR_MODEL_PATHS = [
+  null,
+  "car/toyota_levin_ae85_grandfather/lods/levin_lod_1.glb",
+  "car/toyota_levin_ae85_grandfather/lods/levin_lod_2.glb",
+  "car/toyota_levin_ae85_grandfather/lods/levin_lod_3.glb",
+  "car/toyota_levin_ae85_grandfather/lods/levin_lod_4.glb",
+  CAR_MODEL_PATH
+];
+const CAR_RAW_CENTER_X = 60.83647346496582;
+const CAR_RAW_CENTER_Z = 211.54385185241702;
+const CAR_RAW_MIN_Y = -0.46939998865137395;
+const CAR_SCALE = 9.2 / 462.1883583068848;
+const CAR_RAW_LEFT_X = 136.65182495117188;
+const CAR_RAW_RIGHT_X = -13.471727460622787;
+const CAR_RAW_FRONT_Z = 349.9110870361328;
+const CAR_RAW_REAR_Z = 86.52527523040771;
+const CAR_RAW_WHEEL_Y = 31.578731536865234;
+const CAR_RAW_WHEEL_RADIUS = 32.0511;
+// The model is authored +Z-forward and is rotated 180 degrees into -Z-forward.
+const TRUCK_FRONT_Z = -(CAR_RAW_FRONT_Z - CAR_RAW_CENTER_Z) * CAR_SCALE;
+const TRUCK_REAR_Z = -(CAR_RAW_REAR_Z - CAR_RAW_CENTER_Z) * CAR_SCALE;
+const TRUCK_HALF_TRACK = ((CAR_RAW_LEFT_X - CAR_RAW_RIGHT_X) * 0.5) * CAR_SCALE;
+const TRUCK_WHEEL_CENTER_Y = (CAR_RAW_WHEEL_Y - CAR_RAW_MIN_Y) * CAR_SCALE;
+const TRUCK_WHEEL_Y = TRUCK_WHEEL_CENTER_Y + 0.35;
+const TRUCK_WHEEL_RADIUS = CAR_RAW_WHEEL_RADIUS * CAR_SCALE;
 const TRUCK_FRONT_WHEEL_INDICES = new Set([0, 1]);
-const TRUCK_FRONT_MIN_VISUAL_SUSPENSION = 0.1;
-const TRUCK_REAR_MIN_VISUAL_SUSPENSION = 0.2;
+const TRUCK_FRONT_MIN_VISUAL_SUSPENSION = 0.08;
+const TRUCK_REAR_MIN_VISUAL_SUSPENSION = 0.08;
 const TRUCK_WHEEL_POSITIONS = [
   new THREE.Vector3(TRUCK_HALF_TRACK, TRUCK_WHEEL_Y, TRUCK_FRONT_Z),
   new THREE.Vector3(-TRUCK_HALF_TRACK, TRUCK_WHEEL_Y, TRUCK_FRONT_Z),
@@ -250,17 +317,51 @@ function loadCarModel() {
   carGroup.position.y += 1;
   scene.add(carGroup);
 
-  const loader = new FBXLoader();
+  requestCarQualityLevel(sceneSettings.qualityLevel);
+}
+
+function disposeCarModel(root) {
+  const disposedMaterials = new Set();
+  root?.traverse((child) => {
+    if (!child.isMesh) return;
+    child.geometry?.dispose();
+    const materials = Array.isArray(child.material) ? child.material : [child.material];
+    materials.forEach((material) => {
+      if (material && !disposedMaterials.has(material)) {
+        disposedMaterials.add(material);
+        material.dispose();
+      }
+    });
+  });
+}
+
+function requestCarQualityLevel(level) {
+  const safeLevel = THREE.MathUtils.clamp(Math.round(level), 1, 5);
+  if (safeLevel === loadedCarQualityLevel && carVisualRoot) return;
+  if (safeLevel === pendingCarQualityLevel) return;
+  const requestId = ++carModelRequestId;
+  pendingCarQualityLevel = safeLevel;
+
+  const loader = new GLTFLoader();
   loader.load(
-    TRUCK_MODEL_PATH,
-    (truck) => {
-      attachTruckModel(truck);
+    CAR_MODEL_PATHS[safeLevel],
+    (gltf) => {
+      if (requestId !== carModelRequestId) {
+        disposeCarModel(gltf.scene);
+        return;
+      }
+      pendingCarQualityLevel = 0;
+      attachCarModel(gltf.scene);
+      loadedCarQualityLevel = safeLevel;
       setupVehiclePhysics();
     },
     undefined,
     () => {
-      attachFallbackTruckModel();
-      setupVehiclePhysics();
+      if (requestId === carModelRequestId) pendingCarQualityLevel = 0;
+      if (requestId === carModelRequestId && !carVisualRoot) {
+        attachFallbackTruckModel();
+        setupVehiclePhysics();
+      }
     }
   );
 }
@@ -293,57 +394,154 @@ function addWheelMotionMarkers(wheelGroup, sideSign = 1) {
   wheelGroup.add(hub, spoke, sideMarker);
 }
 
-function attachTruckModel(truck) {
-  const wheelMeshesByName = new Map();
-  const truckTexture = textureLoader.load(TRUCK_TEXTURE_PATH);
-  truckTexture.colorSpace = THREE.SRGBColorSpace;
-  truckTexture.encoding = THREE.sRGBEncoding;
+const CAR_WHEEL_SPIN_MATERIALS = new Set(["advan_neova1", "default_grey__s1", "default_grey__e"]);
+const CAR_WHEEL_STEER_MATERIALS = new Set(["brake__spec_2", "Matte__FF191919"]);
+const CAR_WHEEL_RAW_CENTERS = [
+  new THREE.Vector3(CAR_RAW_RIGHT_X, CAR_RAW_WHEEL_Y, CAR_RAW_REAR_Z),
+  new THREE.Vector3(CAR_RAW_LEFT_X, CAR_RAW_WHEEL_Y, CAR_RAW_REAR_Z),
+  new THREE.Vector3(CAR_RAW_RIGHT_X, CAR_RAW_WHEEL_Y, CAR_RAW_FRONT_Z),
+  new THREE.Vector3(CAR_RAW_LEFT_X, CAR_RAW_WHEEL_Y, CAR_RAW_FRONT_Z)
+];
 
-  truck.scale.setScalar(TRUCK_SCALE);
-  truck.rotation.y = Math.PI;
+function splitCombinedWheelMesh(sourceMesh) {
+  const sourceGeometry = sourceMesh.geometry.index
+    ? sourceMesh.geometry.toNonIndexed()
+    : sourceMesh.geometry.clone();
+  const buckets = CAR_WHEEL_RAW_CENTERS.map(() => ({}));
+  const position = sourceGeometry.attributes.position;
+  const worldPosition = new THREE.Vector3();
+  const worldNormal = new THREE.Vector3();
+  const normalMatrix = new THREE.Matrix3().getNormalMatrix(sourceMesh.matrixWorld);
 
-  truck.traverse((child) => {
-    if (!child.isMesh) {
-      return;
-    }
-
-    child.castShadow = true;
-    child.receiveShadow = true;
-    child.material = new THREE.MeshStandardMaterial({
-      map: truckTexture,
-      roughness: /tire/i.test(child.name) ? 0.78 : 0.48,
-      metalness: 0.06
-    });
-
-    if (/tire/i.test(child.name)) {
-      wheelMeshesByName.set(child.name, child);
-    }
+  Object.entries(sourceGeometry.attributes).forEach(([name]) => {
+    buckets.forEach((bucket) => { bucket[name] = []; });
   });
 
-  for (const wheelMesh of wheelMeshesByName.values()) {
-    if (wheelMesh.parent) {
-      wheelMesh.parent.remove(wheelMesh);
+  for (let triangle = 0; triangle < position.count; triangle += 3) {
+    let centerX = 0;
+    let centerZ = 0;
+    for (let vertex = 0; vertex < 3; vertex += 1) {
+      worldPosition.fromBufferAttribute(position, triangle + vertex).applyMatrix4(sourceMesh.matrixWorld);
+      centerX += worldPosition.x;
+      centerZ += worldPosition.z;
     }
+    centerX /= 3;
+    centerZ /= 3;
+    const region = (centerX >= CAR_RAW_CENTER_X ? 1 : 0) + (centerZ >= CAR_RAW_CENTER_Z ? 2 : 0);
+    const wheelCenter = CAR_WHEEL_RAW_CENTERS[region];
+
+    Object.entries(sourceGeometry.attributes).forEach(([name, attribute]) => {
+      for (let vertex = 0; vertex < 3; vertex += 1) {
+        const index = triangle + vertex;
+        if (name === "position") {
+          worldPosition.fromBufferAttribute(attribute, index).applyMatrix4(sourceMesh.matrixWorld).sub(wheelCenter);
+          buckets[region][name].push(worldPosition.x, worldPosition.y, worldPosition.z);
+        } else if (name === "normal") {
+          worldNormal.fromBufferAttribute(attribute, index).applyMatrix3(normalMatrix).normalize();
+          buckets[region][name].push(worldNormal.x, worldNormal.y, worldNormal.z);
+        } else {
+          for (let component = 0; component < attribute.itemSize; component += 1) {
+            buckets[region][name].push(attribute.array[index * attribute.itemSize + component]);
+          }
+        }
+      }
+    });
   }
 
-  carGroup.add(truck);
-
-  const orderedWheelNames = ["Front_Tire001", "Front_Tire", "Rear_Tire001", "Rear_Tire"];
-  visualWheels = orderedWheelNames.map((name, index) => {
-    const wheelGroup = new THREE.Group();
-    const sourceMesh = wheelMeshesByName.get(name) || wheelMeshesByName.values().next().value;
-    const tire = sourceMesh.clone();
-    tire.position.set(0, 0, 0);
-    tire.rotation.set(0, TRUCK_WHEEL_BASE_YAW, 0);
-    tire.scale.setScalar(TRUCK_SCALE);
-    wheelGroup.add(tire);
-    addWheelMotionMarkers(wheelGroup, Math.sign(TRUCK_WHEEL_POSITIONS[index].x) || 1);
-    wheelGroup.position.copy(TRUCK_WHEEL_POSITIONS[index]);
-    wheelGroup.userData.baseYaw = TRUCK_WHEEL_BASE_YAW;
-    wheelGroup.userData.spin = 0;
-    carGroup.add(wheelGroup);
-    return wheelGroup;
+  const parts = buckets.map((bucket, region) => {
+    const geometry = new THREE.BufferGeometry();
+    Object.entries(sourceGeometry.attributes).forEach(([name, attribute]) => {
+      geometry.setAttribute(name, new THREE.Float32BufferAttribute(bucket[name], attribute.itemSize, attribute.normalized));
+    });
+    geometry.computeBoundingBox();
+    geometry.computeBoundingSphere();
+    const part = new THREE.Mesh(geometry, sourceMesh.material);
+    part.name = `${sourceMesh.name}_wheel_${region}`;
+    part.castShadow = true;
+    part.receiveShadow = true;
+    return part;
   });
+  sourceGeometry.dispose();
+  return parts;
+}
+
+function attachCarModel(carModel) {
+  carModel.updateMatrixWorld(true);
+  const wheelSourceMeshes = [];
+  const edgeOverlayMeshes = [];
+  carModel.traverse((child) => {
+    if (!child.isMesh) return;
+    child.castShadow = true;
+    child.receiveShadow = true;
+    const materialName = child.material?.name || "";
+    if (materialName.startsWith("edge_color")) {
+      edgeOverlayMeshes.push(child);
+      return;
+    }
+    if (CAR_WHEEL_SPIN_MATERIALS.has(materialName) || CAR_WHEEL_STEER_MATERIALS.has(materialName)) {
+      wheelSourceMeshes.push(child);
+    }
+  });
+
+  const edgeMaterials = new Set();
+  edgeOverlayMeshes.forEach((mesh) => {
+    mesh.parent?.remove(mesh);
+    mesh.geometry.dispose();
+    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    materials.forEach((material) => { if (material) edgeMaterials.add(material); });
+  });
+  edgeMaterials.forEach((material) => material.dispose());
+
+  const wheelParts = CAR_WHEEL_RAW_CENTERS.map(() => ({ spin: [], steer: [] }));
+  wheelSourceMeshes.forEach((sourceMesh) => {
+    const parts = splitCombinedWheelMesh(sourceMesh);
+    const spins = CAR_WHEEL_SPIN_MATERIALS.has(sourceMesh.material?.name || "");
+    parts.forEach((part, region) => wheelParts[region][spins ? "spin" : "steer"].push(part));
+    sourceMesh.parent?.remove(sourceMesh);
+    sourceMesh.geometry.dispose();
+  });
+
+  const content = new THREE.Group();
+  content.name = "LevinContent";
+  content.position.set(-CAR_RAW_CENTER_X, -CAR_RAW_MIN_Y, -CAR_RAW_CENTER_Z);
+  content.add(carModel);
+
+  const regionPivots = CAR_WHEEL_RAW_CENTERS.map((wheelCenter, region) => {
+    const steerPivot = new THREE.Group();
+    const spinPivot = new THREE.Group();
+    steerPivot.name = `LevinWheelSteer${region}`;
+    spinPivot.name = `LevinWheelSpin${region}`;
+    steerPivot.position.copy(wheelCenter);
+    steerPivot.add(spinPivot);
+    wheelParts[region].spin.forEach((part) => spinPivot.add(part));
+    wheelParts[region].steer.forEach((part) => steerPivot.add(part));
+    steerPivot.userData.authoredWheel = true;
+    steerPivot.userData.basePosition = steerPivot.position.clone();
+    steerPivot.userData.spinPivot = spinPivot;
+    steerPivot.userData.spin = 0;
+    content.add(steerPivot);
+    return steerPivot;
+  });
+
+  const normalization = new THREE.Group();
+  normalization.name = "ToyotaLevinVisual";
+  normalization.scale.setScalar(CAR_SCALE);
+  normalization.rotation.y = Math.PI;
+  normalization.add(content);
+  carGroup.add(normalization);
+
+  // Physics order: front right, front left, rear right, rear left.
+  visualWheels = [regionPivots[2], regionPivots[3], regionPivots[0], regionPivots[1]];
+  visualWheels.forEach((wheel, index) => {
+    wheel.userData.restSuspensionLength = TRUCK_FRONT_WHEEL_INDICES.has(index) ? 0.36 : 0.34;
+  });
+
+  const previousVisual = carVisualRoot;
+  carVisualRoot = normalization;
+  if (previousVisual) {
+    carGroup.remove(previousVisual);
+    disposeCarModel(previousVisual);
+  }
 }
 
 function attachFallbackTruckModel() {
@@ -380,6 +578,7 @@ function attachFallbackTruckModel() {
   });
 
   carGroup.add(wrapper);
+  carVisualRoot = wrapper;
 }
 
 function setupVehiclePhysics() {
@@ -393,16 +592,16 @@ function setupVehiclePhysics() {
     .setAngularDamping(1.65);
   carBody = physicsWorld.createRigidBody(rigidBodyDesc);
 
-  const colliderDesc = RAPIER.ColliderDesc.cuboid(1.72, 0.82, 3.5)
-    .setTranslation(0, 1.34, 0.12)
-    .setMass(2500.0);
+  const colliderDesc = RAPIER.ColliderDesc.cuboid(1.78, 0.78, 4.15)
+    .setTranslation(0, 1.08, 0)
+    .setMass(1800.0);
   physicsWorld.createCollider(colliderDesc, carBody);
 
   vehicleController = physicsWorld.createVehicleController(carBody);
 
   TRUCK_WHEEL_POSITIONS.forEach((pos, index) => {
     const isFrontWheel = TRUCK_FRONT_WHEEL_INDICES.has(index);
-    const suspensionRestLength = isFrontWheel ? 0.52 : 0.43;
+    const suspensionRestLength = isFrontWheel ? 0.36 : 0.34;
 
     vehicleController.addWheel(
       new RAPIER.Vector3(pos.x, pos.y, pos.z),
@@ -448,12 +647,110 @@ function initializeTuningPanel() {
     input.addEventListener("input", updateSettingsFromControls);
   });
 
+  if (tuningControls.showFps) {
+    tuningControls.showFps.addEventListener("change", (e) => {
+      document.body.classList.toggle("show-fps", e.target.checked);
+    });
+  }
+
   if (tuningControls.exportSettings) {
     tuningControls.exportSettings.addEventListener("click", exportSceneSettings);
   }
 
   syncControlsFromSettings();
   applySceneSettings();
+}
+
+function initializeQualityControl() {
+  if (!qualitySlider || !qualitySliderWrap || !qualityOutput) {
+    return;
+  }
+
+  const stopInputPropagation = (event) => event.stopPropagation();
+  ["click", "pointerdown", "pointermove", "pointerup", "keydown"].forEach((eventName) => {
+    qualityControl?.addEventListener(eventName, stopInputPropagation);
+  });
+
+  qualitySlider.addEventListener("input", () => {
+    applyQualityLevel(Number.parseInt(qualitySlider.value, 10));
+  });
+  qualitySlider.addEventListener("pointerdown", () => qualityControl?.classList.add("is-dragging"));
+  qualitySlider.addEventListener("pointerup", () => qualityControl?.classList.remove("is-dragging"));
+  qualitySlider.addEventListener("pointercancel", () => qualityControl?.classList.remove("is-dragging"));
+  qualitySlider.addEventListener("blur", () => qualityControl?.classList.remove("is-dragging"));
+  tuningToggle?.addEventListener("click", () => {
+    setTuningPanelOpen(!tuningPanel?.classList.contains("is-open"));
+  });
+
+  applyQualityLevel(sceneSettings.qualityLevel);
+}
+
+function setTuningPanelOpen(isOpen) {
+  tuningPanel?.classList.toggle("is-open", isOpen);
+  tuningToggle?.setAttribute("aria-expanded", String(isOpen));
+  tuningToggle?.setAttribute("aria-label", isOpen ? "Hide scene tuning controls" : "Show scene tuning controls");
+}
+
+function applyQualityLevel(level) {
+  const safeLevel = THREE.MathUtils.clamp(Math.round(level), 1, 5);
+  const preset = QUALITY_PRESETS[safeLevel];
+  const grassFlatteningEnabled = safeLevel >= 4;
+  sceneSettings.qualityLevel = safeLevel;
+  grassQualityDistance = preset.grassDistance;
+  // The mobile tile pool has a smaller safe buffer than desktop, so cap its
+  // extended near-field without ever letting recycled tiles enter the view.
+  highDensityGrassDistance = Math.min(
+    preset.highDensityDistance,
+    window.innerWidth < 700 ? 1.12 : 1.3
+  );
+  renderQuality.minScale = preset.minScale;
+  renderQuality.maxScale = preset.maxScale;
+
+  renderQuality.scale = preset.renderScale;
+
+  renderer.setPixelRatio(renderQuality.scale);
+  renderer.setSize(window.innerWidth, window.innerHeight, false);
+  cloudMaterials.forEach((material) => {
+    material.uniforms.uRaymarchSteps.value = preset.cloudSteps;
+  });
+  grassMaterials.forEach((material) => {
+    material.uniforms.uGrassFlatteningEnabled.value = grassFlatteningEnabled ? 1 : 0;
+    material.uniforms.uTrailStampCount.value = grassFlatteningEnabled ? trailStamps.length : 0;
+    if (material.userData.highDensityLayer) {
+      material.uniforms.uLodDistanceScale.value = highDensityGrassDistance;
+    }
+    if (material.userData.highDensityTransition) {
+      material.uniforms.uLodFadeInScale.value = highDensityGrassDistance;
+    }
+  });
+
+  // Low through Medium only hide blades intersecting the car. Do not retain
+  // dormant trail stamps that could suddenly reappear after raising quality.
+  if (!grassFlatteningEnabled) {
+    trailStamps.length = 0;
+    lastTrailPoint.copy(player.position);
+    updateTrailStampUniforms();
+  }
+
+  const progress = ((safeLevel - 1) / 4) * 100;
+  qualitySlider.value = String(safeLevel);
+  qualitySlider.setAttribute("aria-label", `Graphics quality, ${preset.name} ${safeLevel} of 5`);
+  qualitySliderWrap.style.setProperty("--quality-progress", `${progress}%`);
+  qualityOutput.textContent = `${preset.name} · ${safeLevel}/5`;
+  qualitySteps?.querySelectorAll("span").forEach((step, index) => {
+    step.classList.toggle("is-active", index < safeLevel);
+  });
+
+  window.blissPerformance = {
+    qualityLevel: safeLevel,
+    qualityName: preset.name,
+    renderScale: renderQuality.scale,
+    highDensityGrassDistance
+  };
+
+  if (carGroup) {
+    requestCarQualityLevel(safeLevel);
+  }
 }
 
 function syncControlsFromSettings() {
@@ -712,8 +1009,8 @@ function createClouds() {
     uniform vec3 uSunDirection;
     uniform vec3 uBaseColor;
     uniform vec3 uSunColor;
-
     uniform vec3 uSkyColor;
+    uniform int uRaymarchSteps;
 
     float hash(vec3 p) {
       p = fract(p * 0.3183099 + 0.1);
@@ -734,7 +1031,7 @@ function createClouds() {
     float fbm(vec3 p) {
       float f = 0.0;
       float w = 0.5;
-      for (int i = 0; i < 4; i++) {
+      for (int i = 0; i < 3; i++) {
         f += w * noise(p);
         p *= 2.0;
         w *= 0.5;
@@ -791,17 +1088,19 @@ function createClouds() {
         return;
       }
       
-      int steps = 28;
-      float stepSize = (tFar - tNear) / float(steps);
+      float stepSize = (tFar - tNear) / float(uRaymarchSteps);
       vec3 p = uCameraPos + rayDir * tNear;
       
       vec3 colorAccum = vec3(0.0);
       float transmittance = 1.0;
       vec3 sunDir = normalize(uSunDirection);
       
-      p += rayDir * stepSize * hash(rayDir * 100.0);
+      // Deterministic midpoint sampling keeps cloud edges clean. The quality
+      // presets supply enough samples to avoid the layered look of low counts.
+      p += rayDir * stepSize * 0.5;
 
-      for (int i = 0; i < 28; i++) {
+      for (int i = 0; i < 80; i++) {
+        if (i >= uRaymarchSteps) break;
         if (transmittance < 0.01) break;
         float d = getDensity(p);
         if (d > 0.01) {
@@ -829,7 +1128,8 @@ function createClouds() {
       uSunDirection: { value: new THREE.Vector3(-0.5, 0.8, -0.3).normalize() },
       uBaseColor: { value: new THREE.Color(sceneSettings.fogColor) },
       uSkyColor: { value: new THREE.Color(sceneSettings.skyColor) },
-      uSunColor: { value: new THREE.Color(0xffffff) }
+      uSunColor: { value: new THREE.Color(0xffffff) },
+      uRaymarchSteps: { value: QUALITY_PRESETS[sceneSettings.qualityLevel].cloudSteps }
     },
     transparent: true,
     depthWrite: false,
@@ -842,6 +1142,7 @@ function createClouds() {
   cloudBox.renderOrder = -2;
   scene.add(cloudBox);
   clouds.push(cloudBox);
+  cloudMaterials.push(material);
 }
 
 
@@ -963,36 +1264,41 @@ function parseGLBGeometry(buffer) {
 
 function createGrassBlades() {
   const geometryBySegmentCount = new Map();
-  const material = createFluffyGrassMaterial();
   const isMobile = window.innerWidth < 700;
   const layers = isMobile
     ? [
-        { width: 360, depth: 360, spacing: 5.2, baseScale: 0.9, heightScale: 0.58, carpet: true, followPlayer: true, tileSize: 45, maxDistance: 188, edgeFadeStart: 0.9, densityScale: 0.68, segments: 3 },
-        { width: 260, depth: 260, spacing: 2.9, baseScale: 0.82, heightScale: 0.72, carpet: true, followPlayer: true, tileSize: 32.5, maxDistance: 138, edgeFadeStart: 0.88, densityScale: 0.8, segments: 3 },
-        { width: 140, depth: 140, spacing: 1.42, baseScale: 1.0, heightScale: 1.02, carpet: true, followPlayer: true, tileSize: 20, maxDistance: 84, edgeFadeStart: 0.86, densityScale: 0.84, segments: 5 },
-        { width: 72, depth: 72, spacing: 0.78, baseScale: 0.98, heightScale: 0.34, carpet: true, thatch: true, followPlayer: true, yOffset: 0.026, phaseX: 0.5, phaseZ: 0.5, tileSize: 12, maxDistance: 48, densityScale: 0.84, segments: 5 },
-        { width: 36, depth: 36, spacing: 0.46, baseScale: 0.72, heightScale: 0.15, carpet: true, thatch: true, footLayer: true, followPlayer: true, yOffset: 0.055, phaseX: 0.25, phaseZ: 0.25, tileSize: 6, maxDistance: 24, densityScale: 0.82, segments: 5 }
+        // The extra page around each band is a safety buffer: recycled tiles are
+        // always outside their final fade distance, never in the camera view.
+        { width: 660, depth: 660, spacing: 5.8, baseScale: 0.9, heightScale: 0.58, carpet: true, followPlayer: true, tileSize: 55, maxDistance: 242, densityScale: 0.46, segments: 3, lodFadeIn: [134, 158], lodFadeOut: [212, 242] },
+        { width: 405, depth: 405, spacing: 3.2, baseScale: 0.86, heightScale: 0.78, carpet: true, followPlayer: true, tileSize: 33.75, maxDistance: 156, densityScale: 0.58, segments: 3, followsHighDensity: true, lodFadeIn: [72, 96], lodFadeOut: [134, 158] },
+        { width: 262.5, depth: 262.5, spacing: 1.46, baseScale: 1.16, heightScale: 1.22, carpet: true, followPlayer: true, tileSize: 18.75, maxDistance: 92, densityScale: 0.76, segments: 4, highDensity: true, lodFadeIn: [0, 0], lodFadeOut: [72, 96] },
+        { width: 144, depth: 144, spacing: 1.1, baseScale: 0.98, heightScale: 0.38, carpet: true, thatch: true, followPlayer: true, yOffset: 0.026, phaseX: 0.5, phaseZ: 0.5, tileSize: 12, maxDistance: 52, densityScale: 0.58, segments: 3, lodFadeIn: [0, 0], lodFadeOut: [39, 54] },
+        { width: 79.3338, depth: 79.3338, spacing: 0.72, baseScale: 0.8, heightScale: 0.18, carpet: true, thatch: true, footLayer: true, followPlayer: true, yOffset: 0.055, phaseX: 0.25, phaseZ: 0.25, tileSize: 5.6667, maxDistance: 28, densityScale: 0.56, segments: 3, lodFadeIn: [0, 0], lodFadeOut: [21, 30] }
       ]
     : [
-        { width: 460, depth: 460, spacing: 5.6, baseScale: 0.9, heightScale: 0.58, carpet: true, followPlayer: true, tileSize: 57.5, maxDistance: 238, edgeFadeStart: 0.9, densityScale: 0.66, segments: 3 },
-        { width: 330, depth: 330, spacing: 3.1, baseScale: 0.82, heightScale: 0.74, carpet: true, followPlayer: true, tileSize: 41.25, maxDistance: 176, edgeFadeStart: 0.88, densityScale: 0.76, segments: 3 },
-        { width: 176, depth: 176, spacing: 1.38, baseScale: 1.0, heightScale: 1.03, carpet: true, followPlayer: true, tileSize: 22, maxDistance: 106, edgeFadeStart: 0.86, densityScale: 0.82, segments: 5 },
-        { width: 98, depth: 98, spacing: 0.74, baseScale: 0.98, heightScale: 0.34, carpet: true, thatch: true, followPlayer: true, yOffset: 0.026, phaseX: 0.5, phaseZ: 0.5, tileSize: 14, maxDistance: 62, densityScale: 0.88, segments: 5 },
-        { width: 48, depth: 48, spacing: 0.42, baseScale: 0.72, heightScale: 0.15, carpet: true, thatch: true, footLayer: true, followPlayer: true, yOffset: 0.055, phaseX: 0.25, phaseZ: 0.25, tileSize: 8, maxDistance: 30, densityScale: 0.82, segments: 5 }
+        // These dimensions are exact tile multiples. A tile can only recycle
+        // beyond the LOD's fade-out radius, eliminating directional page pops.
+        { width: 750, depth: 750, spacing: 6.0, baseScale: 0.9, heightScale: 0.6, carpet: true, followPlayer: true, tileSize: 62.5, maxDistance: 274, densityScale: 0.46, segments: 3, lodFadeIn: [156, 186], lodFadeOut: [240, 274] },
+        { width: 525, depth: 525, spacing: 3.35, baseScale: 0.86, heightScale: 0.8, carpet: true, followPlayer: true, tileSize: 43.75, maxDistance: 184, densityScale: 0.58, segments: 3, followsHighDensity: true, lodFadeIn: [72, 96], lodFadeOut: [156, 186] },
+        { width: 332.5, depth: 332.5, spacing: 1.4, baseScale: 1.18, heightScale: 1.24, carpet: true, followPlayer: true, tileSize: 23.75, maxDistance: 94, densityScale: 0.76, segments: 4, highDensity: true, lodFadeIn: [0, 0], lodFadeOut: [72, 96] },
+        { width: 184, depth: 184, spacing: 1.08, baseScale: 1.0, heightScale: 0.4, carpet: true, thatch: true, followPlayer: true, yOffset: 0.026, phaseX: 0.5, phaseZ: 0.5, tileSize: 11.5, maxDistance: 68, densityScale: 0.58, segments: 3, lodFadeIn: [0, 0], lodFadeOut: [50, 70] },
+        { width: 93.3338, depth: 93.3338, spacing: 0.7, baseScale: 0.82, heightScale: 0.19, carpet: true, thatch: true, footLayer: true, followPlayer: true, yOffset: 0.055, phaseX: 0.25, phaseZ: 0.25, tileSize: 6.6667, maxDistance: 34, densityScale: 0.56, segments: 3, lodFadeIn: [0, 0], lodFadeOut: [25, 36] }
       ];
 
   layers.forEach((layer) => {
     layer.depth = layer.depth || layer.zMax - layer.zMin || layer.width;
     layer.segmentCount = chooseGrassTileSegmentCount(layer);
+    const material = createFluffyGrassMaterial(layer);
+    grassMaterials.push(material);
     scene.add(createGrassFieldLayer(geometryBySegmentCount, material, layer));
   });
-
-  grassMaterials.push(material);
   createDistantGrassBillboards(isMobile);
 }
 
 function createProceduralBladeGeometry(segments) {
-  const planeCount = 3;
+  // Two crossed cards preserve the fluffy silhouette while cutting one third
+  // of grass vertex work before the per-blade shader runs.
+  const planeCount = 2;
   const positions = [];
   const normals = [];
   const uvs = [];
@@ -1229,6 +1535,10 @@ function chooseGrassTileSegmentCount(layer) {
 
   if (layer.segments >= 5) {
     return 5;
+  }
+
+  if (layer.segments >= 4) {
+    return 4;
   }
 
   return 3;
@@ -1492,7 +1802,20 @@ function updateGrassLayerVisibility() {
     grassLayerSphere.set(grassLayerCenter, entry.radius);
 
     const cameraDistance = Math.hypot(player.position.x - entry.centerX, player.position.z - entry.centerZ);
-    const distanceVisible = !entry.layer.maxDistance || cameraDistance - entry.radius < entry.layer.maxDistance + 36;
+    const lodFadeIn = entry.layer.lodFadeIn || [0, 0];
+    const lodFadeOut = entry.layer.lodFadeOut || [entry.layer.maxDistance || Infinity, entry.layer.maxDistance || Infinity];
+    // Reject complete tiles before issuing a draw. The shader handles the small
+    // overlap between bands, so LOD transitions remain invisible at tile edges.
+    const qualityFadeIn = entry.layer.followsHighDensity
+      ? lodFadeIn[0] * highDensityGrassDistance
+      : lodFadeIn[0];
+    const qualityFadeOut = entry.layer.highDensity
+      ? lodFadeOut[1] * highDensityGrassDistance
+      : lodFadeIn[0] === 0
+        ? lodFadeOut[1]
+        : lodFadeOut[1] * grassQualityDistance;
+    const distanceVisible = cameraDistance + entry.radius >= qualityFadeIn
+      && cameraDistance - entry.radius <= qualityFadeOut;
     const frustumVisible = grassVisibilityFrustum.intersectsSphere(grassLayerSphere);
     entry.mesh.visible = distanceVisible && frustumVisible && entry.mesh.count > 0;
 
@@ -1521,8 +1844,8 @@ function updateGrassLayerVisibility() {
   document.body.dataset.grassStats = JSON.stringify(grassStats);
 }
 
-function createFluffyGrassMaterial() {
-  return new THREE.ShaderMaterial({
+function createFluffyGrassMaterial(layer) {
+  const material = new THREE.ShaderMaterial({
     side: THREE.DoubleSide,
     transparent: false,
     alphaTest: 0.1,
@@ -1534,9 +1857,14 @@ function createFluffyGrassMaterial() {
       uWindDirection: { value: new THREE.Vector2(1, 1).normalize() },
       uWindStrength: { value: sceneSettings.windStrength },
       uGrassHeightMultiplier: { value: sceneSettings.grassHeight },
+      uLodFadeIn: { value: new THREE.Vector2(...(layer.lodFadeIn || [0, 0])) },
+      uLodFadeOut: { value: new THREE.Vector2(...(layer.lodFadeOut || [layer.maxDistance || 1000, layer.maxDistance || 1000])) },
+      uLodDistanceScale: { value: layer.highDensity ? highDensityGrassDistance : 1 },
+      uLodFadeInScale: { value: layer.followsHighDensity ? highDensityGrassDistance : 1 },
       uPlayerPosition: { value: new THREE.Vector2(player.position.x, player.position.z) },
       uCarRight: { value: carRight2D.clone() },
       uCarForward: { value: carForward2D.clone() },
+      uGrassFlatteningEnabled: { value: sceneSettings.qualityLevel >= 4 ? 1 : 0 },
       uTrailStampPositionRight: { value: trailStampPositionRightUniforms },
       uTrailStampForwardFade: { value: trailStampForwardFadeUniforms },
       uTrailStampCount: { value: 0 },
@@ -1553,11 +1881,16 @@ function createFluffyGrassMaterial() {
       uniform vec2 uWindDirection;
       uniform float uWindStrength;
       uniform float uGrassHeightMultiplier;
+      uniform vec2 uLodFadeIn;
+      uniform vec2 uLodFadeOut;
+      uniform float uLodDistanceScale;
+      uniform float uLodFadeInScale;
       uniform vec2 uPlayerPosition;
       uniform vec2 uCarRight;
       uniform vec2 uCarForward;
-      uniform vec4 uTrailStampPositionRight[72];
-      uniform vec4 uTrailStampForwardFade[72];
+      uniform float uGrassFlatteningEnabled;
+      uniform vec4 uTrailStampPositionRight[12];
+      uniform vec4 uTrailStampForwardFade[12];
       uniform int uTrailStampCount;
 
       varying vec2 vUv;
@@ -1566,6 +1899,7 @@ function createFluffyGrassMaterial() {
       varying float vHeight;
       varying float vFogDepth;
       varying float vBladeFade;
+      varying float vLodDither;
       varying float vCrushAmount;
 
       float hash12(vec2 p) {
@@ -1581,6 +1915,20 @@ function createFluffyGrassMaterial() {
         // We still need distance to the car for fading
         vec2 playerDelta = instanceOrigin.xz - uPlayerPosition;
         float playerDistance = length(playerDelta);
+        float lodFadeIn = uLodFadeIn.y <= uLodFadeIn.x
+          ? 1.0
+          : smoothstep(uLodFadeIn.x * uLodFadeInScale, uLodFadeIn.y * uLodFadeInScale, playerDistance);
+        float lodFadeOut = uLodFadeOut.y <= uLodFadeOut.x
+          ? 1.0
+          : smoothstep(uLodFadeOut.x * uLodDistanceScale, uLodFadeOut.y * uLodDistanceScale, playerDistance);
+        float lodVisibility = lodFadeIn * (1.0 - lodFadeOut);
+
+        // Avoid the trail, wind and texture work for blades outside this LOD.
+        // The dither value is world-stable, so an instance never visibly pops.
+        if (lodVisibility < 0.002) {
+          gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+          return;
+        }
 
         // Global UV for noise sampling based on world position
         vec2 globalUv = (vec2(230.0) - instanceOrigin.xz) / 460.0;
@@ -1602,15 +1950,25 @@ function createFluffyGrassMaterial() {
         
         vec2 d = abs(localBladePos) - vec2(1.95, 4.0);
         float sdf = length(max(d, 0.0)) + min(max(d.x, d.y), 0.0);
+
+        // Lower quality levels skip deformation entirely. Cull only blades
+        // intersecting the full 9.2 x 3.94 car footprint so they cannot poke
+        // through the bodywork, including the front and rear overhangs.
+        vec2 clipD = abs(localBladePos) - vec2(1.9, 4.45);
+        float clipSdf = length(max(clipD, 0.0)) + min(max(clipD.x, clipD.y), 0.0);
+        if (uGrassFlatteningEnabled < 0.5 && clipSdf < 0.08) {
+          gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+          return;
+        }
         
-        float carPush = 1.0 - smoothstep(-0.16, 0.95, sdf);
+        float carPush = uGrassFlatteningEnabled * (1.0 - smoothstep(-0.16, 0.95, sdf));
         if (carPush > maxPush) {
           maxPush = carPush;
           vec2 localPush = normalize(vec2(localBladePos.x, max(abs(localBladePos.y) - 2.4, 0.0) * sign(localBladePos.y)) + vec2(0.0001));
           bestPushDir = normalize(uCarRight * localPush.x + uCarForward * localPush.y);
         }
 
-        for (int i = 0; i < 72; i += 1) {
+        for (int i = 0; i < 12; i += 1) {
           if (i >= uTrailStampCount) {
             break;
           }
@@ -1672,7 +2030,8 @@ function createFluffyGrassMaterial() {
         vNormal = normalize(normalMatrix * mat3(instanceMatrix) * normal);
         vHeight = heightFactor;
         vFogDepth = -viewPosition.z;
-        vBladeFade = 1.0 - smoothstep(168.0, 230.0, playerDistance);
+        vBladeFade = lodVisibility;
+        vLodDither = hash12(floor(instanceOrigin.xz * 3.0));
         vCrushAmount = maxPush;
         gl_Position = projectionMatrix * viewPosition;
       }
@@ -1693,13 +2052,16 @@ function createFluffyGrassMaterial() {
       varying float vHeight;
       varying float vFogDepth;
       varying float vBladeFade;
+      varying float vLodDither;
       varying float vCrushAmount;
 
       void main() {
         vec4 grassAlpha = texture2D(uGrassAlphaTexture, vUv);
         float alpha = step(0.1, grassAlpha.r) * vBladeFade;
 
-        if (alpha < 0.04) {
+        // Stochastic dither cross-fade: adjacent LOD bands overlap in distance,
+        // but each blade has a stable winner rather than an alpha-sorted seam.
+        if (alpha < 0.04 || vBladeFade < vLodDither) {
           discard;
         }
 
@@ -1716,6 +2078,9 @@ function createFluffyGrassMaterial() {
       }
     `
   });
+  material.userData.highDensityLayer = Boolean(layer.highDensity);
+  material.userData.highDensityTransition = Boolean(layer.followsHighDensity);
+  return material;
 }
 
 function terrainNormal(x, z, target) {
@@ -1734,8 +2099,40 @@ function resizeScene() {
 
   camera.aspect = width / height;
   camera.updateProjectionMatrix();
-  renderer.setPixelRatio(1);
+  renderer.setPixelRatio(renderQuality.scale);
   renderer.setSize(width, height, false);
+}
+
+function updateDynamicResolution(frameTime) {
+  renderQuality.sampleTime += frameTime;
+  renderQuality.sampleFrames += 1;
+
+  if (renderQuality.sampleTime < 0.75) {
+    return;
+  }
+
+  const averageFrameTime = renderQuality.sampleTime / renderQuality.sampleFrames;
+  let nextScale = renderQuality.scale;
+
+  // A slow GPU gets an immediate 2x+ pixel-cost escape hatch; when there is
+  // headroom, the renderer quietly restores full resolution.
+  if (averageFrameTime > 1 / 50) {
+    nextScale = Math.max(renderQuality.minScale, renderQuality.scale - 0.05);
+  } else if (averageFrameTime < 1 / 66) {
+    nextScale = Math.min(renderQuality.maxScale, renderQuality.scale + 0.025);
+  }
+
+  renderQuality.sampleTime = 0;
+  renderQuality.sampleFrames = 0;
+
+  if (nextScale === renderQuality.scale) {
+    return;
+  }
+
+  renderQuality.scale = nextScale;
+  renderer.setPixelRatio(renderQuality.scale);
+  renderer.setSize(window.innerWidth, window.innerHeight, false);
+  window.blissPerformance = { renderScale: renderQuality.scale, averageFrameTime };
 }
 
 function handleKeyDown(event) {
@@ -1841,6 +2238,21 @@ function handleMouseLook(event) {
   look(event.movementX, event.movementY);
 }
 
+function handleCameraZoom(event) {
+  event.preventDefault();
+  const wheelAmount = THREE.MathUtils.clamp(event.deltaY / 120, -2, 2);
+  cameraZoom.targetDistance = THREE.MathUtils.clamp(
+    cameraZoom.targetDistance + wheelAmount * 1.1,
+    8,
+    26
+  );
+  cameraZoom.targetFov = THREE.MathUtils.clamp(
+    cameraZoom.targetFov + wheelAmount * 2.2,
+    32,
+    72
+  );
+}
+
 function look(deltaX, deltaY) {
   player.camYawOffset -= deltaX * 0.0021;
   player.camPitchOffset -= deltaY * 0.0021;
@@ -1906,6 +2318,7 @@ function handleTouchEnd(event) {
 function updatePhysics(delta) {
   if (!physicsWorld || !physicsReady) {
     updateFallbackCar(delta);
+    updateChaseCamera(delta);
     updateFollowGrassLayers();
     return;
   }
@@ -1934,22 +2347,7 @@ function updatePhysics(delta) {
   }
 
   syncVehicleFromPhysics(delta, vehicleInput);
-
-  // Third-person chase camera
-  const chaseDist = 12;
-  const chaseHeight = 4;
-  
-  const totalYaw = player.yaw + player.camYawOffset;
-  const hDist = Math.cos(player.camPitchOffset) * chaseDist;
-  const vDist = Math.sin(player.camPitchOffset) * chaseDist;
-  
-  const camX = player.position.x + Math.sin(totalYaw) * hDist;
-  const camZ = player.position.z + Math.cos(totalYaw) * hDist;
-  const camY = player.position.y + chaseHeight - vDist;
-
-  camera.position.lerp(new THREE.Vector3(camX, camY, camZ), 0.1);
-  camera.lookAt(player.position.x, player.position.y + 1, player.position.z);
-  
+  updateChaseCamera(delta);
   updateFollowGrassLayers();
 }
 
@@ -2015,7 +2413,7 @@ function syncVehicleFromPhysics(delta, vehicleInput) {
     player.velocity.set(velocity.x, velocity.y, velocity.z);
   }
   
-  const euler = new THREE.Euler().setFromQuaternion(new THREE.Quaternion(rot.x, rot.y, rot.z, rot.w), "YXZ");
+  const euler = new THREE.Euler().setFromQuaternion(visualQuat, "YXZ");
   player.yaw = euler.y;
 
   if (visualWheels.length === 4) {
@@ -2033,13 +2431,24 @@ function syncVehicleFromPhysics(delta, vehicleInput) {
         ? TRUCK_FRONT_MIN_VISUAL_SUSPENSION
         : TRUCK_REAR_MIN_VISUAL_SUSPENSION;
       const displayedSuspensionLength = Math.max(suspensionLength, minVisualSuspension);
-      const connectionPoint = vehicleController.wheelChassisConnectionPointCs(i);
-      visualWheel.position.set(
-        connectionPoint.x,
-        connectionPoint.y - displayedSuspensionLength,
-        connectionPoint.z
-      );
-      visualWheel.rotation.set(visualWheel.userData.spin, wheelSteering + (visualWheel.userData.baseYaw || 0), 0, "YXZ");
+      if (visualWheel.userData.authoredWheel) {
+        const basePosition = visualWheel.userData.basePosition;
+        const restLength = visualWheel.userData.restSuspensionLength;
+        visualWheel.position.copy(basePosition);
+        visualWheel.position.y -= (displayedSuspensionLength - restLength) / CAR_SCALE;
+        visualWheel.rotation.set(0, wheelSteering, 0);
+        // Tire, rim and disc rotate around the authored axle; brake calipers
+        // share steering but remain stationary inside the outer pivot.
+        visualWheel.userData.spinPivot.rotation.x = visualWheel.userData.spin;
+      } else {
+        const connectionPoint = vehicleController.wheelChassisConnectionPointCs(i);
+        visualWheel.position.set(
+          connectionPoint.x,
+          connectionPoint.y - displayedSuspensionLength,
+          connectionPoint.z
+        );
+        visualWheel.rotation.set(visualWheel.userData.spin, wheelSteering + (visualWheel.userData.baseYaw || 0), 0, "YXZ");
+      }
     }
   }
 }
@@ -2075,8 +2484,74 @@ function updateFallbackCar(delta) {
 
   visualWheels.forEach((wheel, index) => {
     const steering = index < 2 ? carSteering * 18 : 0;
-    wheel.rotation.set(clock.elapsedTime * carSpeed * 0.95, steering + (wheel.userData.baseYaw || 0), 0, "YXZ");
+    if (wheel.userData.authoredWheel) {
+      wheel.rotation.set(0, steering, 0);
+      wheel.userData.spin = (wheel.userData.spin || 0) - (carSpeed / TRUCK_WHEEL_RADIUS) * delta;
+      wheel.userData.spinPivot.rotation.x = wheel.userData.spin;
+    } else {
+      wheel.rotation.set(clock.elapsedTime * carSpeed * 0.95, steering + (wheel.userData.baseYaw || 0), 0, "YXZ");
+    }
   });
+}
+
+function updateChaseCamera(delta) {
+  const chaseHeight = 4;
+  const headingBlend = 1 - Math.exp(-10 * delta);
+  const positionBlend = 1 - Math.exp(-7 * delta);
+  const targetBlend = 1 - Math.exp(-8 * delta);
+  const zoomBlend = 1 - Math.exp(-11 * delta);
+
+  cameraZoom.distance += (cameraZoom.targetDistance - cameraZoom.distance) * zoomBlend;
+  cameraZoom.fov += (cameraZoom.targetFov - cameraZoom.fov) * zoomBlend;
+  if (Math.abs(camera.fov - cameraZoom.fov) > 0.001) {
+    camera.fov = cameraZoom.fov;
+    camera.updateProjectionMatrix();
+  }
+  const chaseDistance = cameraZoom.distance;
+
+  if (carGroup) {
+    // Project the interpolated vehicle orientation onto the ground plane.
+    // Physics pitch/roll no longer leaks into a chase-camera wobble.
+    cameraPlanarForward.set(0, 0, -1).applyQuaternion(carGroup.quaternion);
+    cameraPlanarForward.y = 0;
+    if (cameraPlanarForward.lengthSq() > 0.0001) {
+      cameraPlanarForward.normalize();
+      const desiredVehicleYaw = Math.atan2(-cameraPlanarForward.x, -cameraPlanarForward.z);
+      if (!cameraFollow.initialized) {
+        cameraFollow.vehicleYaw = desiredVehicleYaw;
+      } else {
+        const shortestTurn = Math.atan2(
+          Math.sin(desiredVehicleYaw - cameraFollow.vehicleYaw),
+          Math.cos(desiredVehicleYaw - cameraFollow.vehicleYaw)
+        );
+        cameraFollow.vehicleYaw += shortestTurn * headingBlend;
+      }
+    }
+  } else {
+    cameraFollow.vehicleYaw = player.yaw;
+  }
+
+  const orbitYaw = cameraFollow.vehicleYaw + player.camYawOffset;
+  const horizontalDistance = Math.cos(player.camPitchOffset) * chaseDistance;
+  const verticalOffset = Math.sin(player.camPitchOffset) * chaseDistance;
+
+  cameraDesiredTarget.set(player.position.x, player.position.y + 1.15, player.position.z);
+  cameraDesiredPosition.set(
+    player.position.x + Math.sin(orbitYaw) * horizontalDistance,
+    player.position.y + chaseHeight - verticalOffset,
+    player.position.z + Math.cos(orbitYaw) * horizontalDistance
+  );
+
+  if (!cameraFollow.initialized) {
+    camera.position.copy(cameraDesiredPosition);
+    cameraFollow.target.copy(cameraDesiredTarget);
+    cameraFollow.initialized = true;
+  } else {
+    camera.position.lerp(cameraDesiredPosition, positionBlend);
+    cameraFollow.target.lerp(cameraDesiredTarget, targetBlend);
+  }
+
+  camera.lookAt(cameraFollow.target);
 }
 
 function animateClouds(delta) {
@@ -2098,10 +2573,12 @@ function animateClouds(delta) {
 function animateGrass(time) {
   updateCarDisplacementBasis();
 
+  const grassFlatteningEnabled = sceneSettings.qualityLevel >= 4;
+
   const dx = player.position.x - lastTrailPoint.x;
   const dz = player.position.z - lastTrailPoint.z;
   
-  if (Math.hypot(dx, dz) > TRAIL_STAMP_DISTANCE && carGroup) {
+  if (grassFlatteningEnabled && Math.hypot(dx, dz) > TRAIL_STAMP_DISTANCE && carGroup) {
     lastTrailPoint.copy(player.position);
     trailStamps.push({
       x: player.position.x,
@@ -2124,7 +2601,8 @@ function animateGrass(time) {
     material.uniforms.uPlayerPosition.value.set(player.position.x, player.position.z);
     material.uniforms.uCarRight.value.copy(carRight2D);
     material.uniforms.uCarForward.value.copy(carForward2D);
-    material.uniforms.uTrailStampCount.value = trailStamps.length;
+    material.uniforms.uGrassFlatteningEnabled.value = grassFlatteningEnabled ? 1 : 0;
+    material.uniforms.uTrailStampCount.value = grassFlatteningEnabled ? trailStamps.length : 0;
   });
 }
 
@@ -2179,8 +2657,10 @@ function updateTrailStampUniforms() {
 function animate() {
   requestAnimationFrame(animate);
 
-  const delta = Math.min(clock.getDelta(), 0.05);
-  updateFpsMeter(delta);
+  const rawDelta = clock.getDelta();
+  const delta = Math.min(rawDelta, 0.05);
+  updateDynamicResolution(rawDelta);
+  updateFpsMeter(rawDelta);
   updatePhysics(delta);
   updateTerrain();
   updateDistantGrass();

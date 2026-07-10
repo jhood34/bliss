@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Bliss</title>
+  <title>a blissful drive</title>
   <script>
     window.addEventListener('error', function(e) {
       var d = document.createElement('div');
@@ -12,7 +12,7 @@
       document.body.appendChild(d);
     });
   </script>
-  <link rel="stylesheet" href="styles.css?v=controls-3">
+  <link rel="stylesheet" href="styles.css?v=controls-4">
 </head>
 <body>
   <main id="app">
@@ -69,6 +69,11 @@
         <input id="wind-strength-control" type="range" min="0" max="2.4" step="0.01" value="1">
       </label>
 
+      <label>
+        <span>Show FPS</span>
+        <input id="show-fps-control" type="checkbox">
+      </label>
+
       <button id="export-settings" type="button">Export settings</button>
       <textarea id="settings-output" readonly aria-label="Exported scene settings"></textarea>
     </aside>
@@ -80,9 +85,39 @@
       </span>
     </div>
 
+    <section id="quality-control" class="quality-control" aria-label="Graphics quality">
+      <div class="quality-control__header">
+        <span>Quality</span>
+        <div class="quality-control__header-actions">
+          <output id="quality-output">Medium · 3/5</output>
+          <button id="tuning-toggle" class="quality-control__tuning-toggle" type="button" aria-expanded="false" aria-controls="tuning-panel" aria-label="Show scene tuning controls">
+            <span aria-hidden="true"></span>
+          </button>
+        </div>
+      </div>
+      <div id="quality-slider-wrap" class="quality-slider" style="--quality-progress: 50%;">
+        <span class="quality-slider__track" aria-hidden="true">
+          <span class="quality-slider__fill"></span>
+        </span>
+        <input id="quality-slider-input" type="range" min="1" max="5" value="3" step="1" aria-label="Graphics quality, Medium 3 of 5">
+        <span class="quality-slider__thumb" aria-hidden="true"></span>
+      </div>
+      <div id="quality-steps" class="quality-steps" aria-hidden="true">
+        <span></span><span></span><span></span><span></span><span></span>
+      </div>
+    </section>
+
     <button id="wallpaper-entry" class="wallpaper-screen" type="button" aria-label="Enter 3D Bliss scene">
       <img src="bliss.jpeg" alt="">
     </button>
+
+    <div class="attribution-container">
+      <button id="attribution-btn" class="attribution-btn" aria-label="Show attribution">?</button>
+      <div id="attribution-popup" class="attribution-popup">
+        "Toyota Levin AE85 Grandfather" (<a href="https://skfb.ly/pEC9o" target="_blank" rel="noopener noreferrer">https://skfb.ly/pEC9o</a>) by GagoSahi is licensed under Creative Commons Attribution (<a href="http://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">http://creativecommons.org/licenses/by/4.0/</a>).<br><br>
+        Three.js grass inspiration by <a href="https://github.com/thebenezer" target="_blank" rel="noopener noreferrer">thebenezer</a>.
+      </div>
+    </div>
   </main>
 
   <script src="vendor/three.min.js?v=0.150.1"></script>
@@ -95,6 +130,6 @@
       }
     }
   </script>
-  <script type="module" src="script.js?v=3d-scene-88"></script>
+  <script type="module" src="script.js?v=3d-scene-89"></script>
 </body>
 </html>
