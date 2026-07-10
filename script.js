@@ -2952,9 +2952,14 @@ function updateChaseCamera(delta) {
   cameraFollow.lastPos.copy(player.position);
   cameraFollow.velocity.lerp(currentVel, 1 - Math.exp(-4 * delta));
   
-  const lookAhead = cameraFollow.velocity.clone().multiplyScalar(0.15);
-  if (lookAhead.lengthSq() > 36) {
-    lookAhead.setLength(6);
+  const aspect = window.innerWidth / window.innerHeight;
+  const isPortrait = aspect < 1.0;
+  const lookFactor = isPortrait ? 0.03 : 0.08;
+  const maxLook = isPortrait ? 1.5 : 4.0;
+  
+  const lookAhead = cameraFollow.velocity.clone().multiplyScalar(lookFactor);
+  if (lookAhead.lengthSq() > maxLook * maxLook) {
+    lookAhead.setLength(maxLook);
   }
 
   cameraDesiredTarget.set(carCenter.x + lookAhead.x, carCenter.y + 1.15, carCenter.z + lookAhead.z);
