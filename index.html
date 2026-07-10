@@ -127,6 +127,10 @@
               </div>
             </div>
           </div>
+          <div class="xp-prompt-text">
+            <span class="desktop-text">Click anywhere to begin...</span>
+            <span class="mobile-text">Tap anywhere to begin...</span>
+          </div>
         </div>
         <div class="xp-banner xp-banner-bottom"></div>
       </div>
@@ -198,5 +202,13 @@
     }
   </script>
   <script type="module" src="script.js?v=3d-scene-89"></script>
-</body>
+    <div id="mobile-controls" class="mobile-controls" aria-hidden="true">
+      <div id="mobile-joystick-zone" class="mobile-joystick-zone">
+        <div id="mobile-joystick-base" class="mobile-joystick-base">
+          <div id="mobile-joystick-thumb" class="mobile-joystick-thumb"></div>
+        </div>
+      </div>
+      <div id="mobile-look-zone" class="mobile-look-zone"></div>
+    </div>
+  </body>
 </html>

@@ -190,9 +190,10 @@ const cameraFollow = {
   initialized: false,
   target: new THREE.Vector3()
 };
+const initialCameraDistance = window.matchMedia("(pointer: coarse)").matches ? 25.0 : 15.897;
 const cameraZoom = {
-  distance: 15.897,
-  targetDistance: 15.897,
+  distance: initialCameraDistance,
+  targetDistance: initialCameraDistance,
   fov: 54.593,
   targetFov: 54.593
 };
@@ -281,10 +282,10 @@ async function startScene() {
 
   canvas.addEventListener("click", lockPointer);
   canvas.addEventListener("wheel", handleCameraZoom, { passive: false });
-  // canvas.addEventListener("touchstart", handleTouchStart, { passive: false });
-  // canvas.addEventListener("touchmove", handleTouchMove, { passive: false });
-  // canvas.addEventListener("touchend", handleTouchEnd, { passive: false });
-  // canvas.addEventListener("touchcancel", handleTouchEnd, { passive: false });
+  canvas.addEventListener("touchstart", handleTouchStart, { passive: false });
+  canvas.addEventListener("touchmove", handleTouchMove, { passive: false });
+  canvas.addEventListener("touchend", handleTouchEnd, { passive: false });
+  canvas.addEventListener("touchcancel", handleTouchEnd, { passive: false });
 
   wallpaperEntry.addEventListener("click", lockPointer);
   canvas.addEventListener("click", togglePointerLock);
@@ -2714,8 +2715,8 @@ function updatePhysics(delta) {
 }
 
 function readVehicleInput() {
-  let forwardInput = 0;
-  let sideInput = 0;
+  let forwardInput = -touch.moveVector.y;
+  let sideInput = touch.moveVector.x;
 
   if (keys.has("KeyW") || keys.has("ArrowUp")) forwardInput += 1;
   if (keys.has("KeyS") || keys.has("ArrowDown")) forwardInput -= 1;
@@ -2827,8 +2828,8 @@ function updateFallbackCar(delta) {
     return;
   }
 
-  let forwardInput = 0;
-  let sideInput = 0;
+  let forwardInput = -touch.moveVector.y;
+  let sideInput = touch.moveVector.x;
 
   if (keys.has("KeyW") || keys.has("ArrowUp")) forwardInput += 1;
   if (keys.has("KeyS") || keys.has("ArrowDown")) forwardInput -= 1;
@@ -3051,6 +3052,25 @@ function updateTrailStampUniforms() {
   }
 }
 
+function updateJoystickUI() {
+  const joystickBase = document.getElementById("mobile-joystick-base");
+  const joystickThumb = document.getElementById("mobile-joystick-thumb");
+  if (!joystickBase || !joystickThumb) return;
+
+  if (touch.moveId !== null) {
+    joystickBase.style.display = "block";
+    joystickBase.style.left = touch.moveStart.x + "px";
+    joystickBase.style.top = touch.moveStart.y + "px";
+    joystickBase.style.bottom = "auto";
+    
+    const thumbX = touch.moveVector.x * 86;
+    const thumbY = touch.moveVector.y * 86;
+    joystickThumb.style.transform = `translate(calc(-50% + ${thumbX}px), calc(-50% + ${thumbY}px))`;
+  } else {
+    joystickBase.style.display = "none";
+  }
+}
+
 function animateCarFade() {
   if (!carVisualRoot) return;
   const progress = (window.sceneStartedTime !== undefined) ? Math.min(1.0, (clock.elapsedTime - window.sceneStartedTime) / 3.0) : 0.0;
@@ -3101,6 +3121,7 @@ function animate() {
   animateClouds(delta);
   animateGrass(clock.elapsedTime);
   animateCarFade();
+  updateJoystickUI();
   renderer.render(scene, camera);
 }
 
