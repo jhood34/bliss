@@ -238,7 +238,11 @@ const touch = {
   lookId: null,
   moveStart: new THREE.Vector2(),
   lookLast: new THREE.Vector2(),
-  moveVector: new THREE.Vector2()
+  moveVector: new THREE.Vector2(),
+  isPinching: false,
+  pinchStartDist: 0,
+  pinchStartZoom: 0,
+  pinchStartFov: 0
 };
 const fpsStats = {
   frames: 0,
@@ -2626,7 +2630,27 @@ function handleTouchStart(event) {
   event.preventDefault();
   document.body.classList.add("scene-started");
 
+  if (event.touches.length === 2) {
+    const dx = event.touches[0].clientX - event.touches[1].clientX;
+    const dy = event.touches[0].clientY - event.touches[1].clientY;
+    const dist = Math.hypot(dx, dy);
+    
+    if (dist < window.innerWidth * 0.6) {
+      touch.isPinching = true;
+      touch.pinchStartDist = dist;
+      touch.pinchStartZoom = cameraZoom.targetDistance;
+      touch.pinchStartFov = cameraZoom.targetFov;
+      
+      touch.moveId = null;
+      touch.lookId = null;
+      touch.moveVector.set(0, 0);
+      return;
+    }
+  }
+
   for (const changedTouch of event.changedTouches) {
+    if (touch.isPinching) return;
+
     const point = new THREE.Vector2(changedTouch.clientX, changedTouch.clientY);
 
     if (point.x < window.innerWidth * 0.48 && touch.moveId === null) {
@@ -2642,6 +2666,27 @@ function handleTouchStart(event) {
 
 function handleTouchMove(event) {
   event.preventDefault();
+
+  if (touch.isPinching && event.touches.length >= 2) {
+    const dx = event.touches[0].clientX - event.touches[1].clientX;
+    const dy = event.touches[0].clientY - event.touches[1].clientY;
+    const dist = Math.hypot(dx, dy);
+    
+    if (dist > 0) {
+      const zoomFactor = touch.pinchStartDist / dist;
+      cameraZoom.targetDistance = THREE.MathUtils.clamp(
+        touch.pinchStartZoom * zoomFactor,
+        8,
+        26
+      );
+      cameraZoom.targetFov = THREE.MathUtils.clamp(
+        touch.pinchStartFov * zoomFactor,
+        32,
+        72
+      );
+    }
+    return;
+  }
 
   for (const changedTouch of event.changedTouches) {
     const point = new THREE.Vector2(changedTouch.clientX, changedTouch.clientY);
@@ -2665,6 +2710,10 @@ function handleTouchMove(event) {
 
 function handleTouchEnd(event) {
   event.preventDefault();
+
+  if (event.touches.length < 2) {
+    touch.isPinching = false;
+  }
 
   for (const changedTouch of event.changedTouches) {
     if (changedTouch.identifier === touch.moveId) {
@@ -2716,7 +2765,7 @@ function updatePhysics(delta) {
 
 function readVehicleInput() {
   let forwardInput = -touch.moveVector.y;
-  let sideInput = touch.moveVector.x;
+  let sideInput = -touch.moveVector.x;
 
   if (keys.has("KeyW") || keys.has("ArrowUp")) forwardInput += 1;
   if (keys.has("KeyS") || keys.has("ArrowDown")) forwardInput -= 1;
@@ -2829,7 +2878,7 @@ function updateFallbackCar(delta) {
   }
 
   let forwardInput = -touch.moveVector.y;
-  let sideInput = touch.moveVector.x;
+  let sideInput = -touch.moveVector.x;
 
   if (keys.has("KeyW") || keys.has("ArrowUp")) forwardInput += 1;
   if (keys.has("KeyS") || keys.has("ArrowDown")) forwardInput -= 1;
