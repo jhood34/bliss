@@ -108,10 +108,11 @@ const trailStampPositionRightUniforms = Array.from({ length: MAX_SHADER_TRAIL_ST
 const trailStampForwardFadeUniforms = Array.from({ length: MAX_SHADER_TRAIL_STAMPS }, () => new THREE.Vector4(0, 1, 0, 0));
 const carRight2D = new THREE.Vector2(1, 0);
 const carForward2D = new THREE.Vector2(0, 1);
+const MOTION_BLUR_CAR_LAYER = 1;
 const motionBlurState = {
-  historyIndex: 0,
-  historyValid: false,
-  historyWeight: 0
+  initialized: false,
+  currentViewProjection: new THREE.Matrix4(),
+  previousViewProjection: new THREE.Matrix4()
 };
 
 const renderer = new THREE.WebGLRenderer({
@@ -138,19 +139,37 @@ const motionBlurCurrentTarget = new THREE.WebGLRenderTarget(1, 1, {
   magFilter: THREE.LinearFilter,
   depthBuffer: true
 });
-const motionBlurHistoryTargets = [
-  new THREE.WebGLRenderTarget(1, 1, { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: false }),
-  new THREE.WebGLRenderTarget(1, 1, { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: false })
-];
+motionBlurCurrentTarget.depthTexture = new THREE.DepthTexture(1, 1);
+motionBlurCurrentTarget.depthTexture.type = THREE.UnsignedIntType;
+const motionBlurCarMaskTarget = new THREE.WebGLRenderTarget(1, 1, {
+  minFilter: THREE.NearestFilter,
+  magFilter: THREE.NearestFilter,
+  depthBuffer: true
+});
+const motionBlurBlurredTarget = new THREE.WebGLRenderTarget(1, 1, {
+  minFilter: THREE.LinearFilter,
+  magFilter: THREE.LinearFilter,
+  depthBuffer: false
+});
+const motionBlurCarMaskMaterial = new THREE.MeshBasicMaterial({
+  color: 0xffffff,
+  fog: false,
+  toneMapped: false
+});
 const motionBlurPostScene = new THREE.Scene();
 const motionBlurPostCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 const motionBlurCompositeMaterial = new THREE.ShaderMaterial({
   depthWrite: false,
   depthTest: false,
+  toneMapped: false,
   uniforms: {
-    uCurrentFrame: { value: motionBlurCurrentTarget.texture },
-    uHistoryFrame: { value: motionBlurHistoryTargets[0].texture },
-    uHistoryWeight: { value: 0 }
+    uColorTexture: { value: motionBlurCurrentTarget.texture },
+    uDepthTexture: { value: motionBlurCurrentTarget.depthTexture },
+    uCarMaskTexture: { value: motionBlurCarMaskTarget.texture },
+    uInverseProjection: { value: new THREE.Matrix4() },
+    uInverseView: { value: new THREE.Matrix4() },
+    uPreviousViewProjection: { value: new THREE.Matrix4() },
+    uShutter: { value: 1 }
   },
   vertexShader: `
     varying vec2 vUv;
@@ -160,18 +179,57 @@ const motionBlurCompositeMaterial = new THREE.ShaderMaterial({
     }
   `,
   fragmentShader: `
-    uniform sampler2D uCurrentFrame;
-    uniform sampler2D uHistoryFrame;
-    uniform float uHistoryWeight;
+    uniform sampler2D uColorTexture;
+    uniform sampler2D uDepthTexture;
+    uniform sampler2D uCarMaskTexture;
+    uniform mat4 uInverseProjection;
+    uniform mat4 uInverseView;
+    uniform mat4 uPreviousViewProjection;
+    uniform float uShutter;
     varying vec2 vUv;
+
+    vec3 reconstructWorldPosition(float depth) {
+      vec4 clipPosition = vec4(vUv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+      vec4 viewPosition = uInverseProjection * clipPosition;
+      viewPosition /= viewPosition.w;
+      vec4 worldPosition = uInverseView * viewPosition;
+      return worldPosition.xyz;
+    }
+
     void main() {
-      vec4 currentFrame = texture2D(uCurrentFrame, vUv);
-      vec4 historyFrame = texture2D(uHistoryFrame, vUv);
-      gl_FragColor = mix(currentFrame, historyFrame, uHistoryWeight);
+      float depth = texture2D(uDepthTexture, vUv).x;
+      vec2 velocity = vec2(0.0);
+
+      // Sky has no geometry depth, while the car is rendered into an explicit
+      // zero-velocity mask because it tracks closely with the chase camera.
+      if (depth < 0.99999 && texture2D(uCarMaskTexture, vUv).r < 0.5) {
+        vec4 previousClipPosition = uPreviousViewProjection * vec4(reconstructWorldPosition(depth), 1.0);
+        vec2 previousUv = previousClipPosition.xy / previousClipPosition.w * 0.5 + 0.5;
+        velocity = clamp((vUv - previousUv) * uShutter, vec2(-0.045), vec2(0.045));
+      }
+
+      vec3 colour = vec3(0.0);
+      float weightTotal = 0.0;
+      for (int i = 0; i < 9; i += 1) {
+        float sampleOffset = (float(i) - 4.0) / 8.0;
+        float weight = 1.0 - abs(sampleOffset) * 0.72;
+        vec2 sampleUv = clamp(vUv - velocity * sampleOffset, vec2(0.001), vec2(0.999));
+        colour += texture2D(uColorTexture, sampleUv).rgb * weight;
+        weightTotal += weight;
+      }
+      gl_FragColor = vec4(colour / weightTotal, 1.0);
     }
   `
 });
 motionBlurPostScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), motionBlurCompositeMaterial));
+const motionBlurPresentationScene = new THREE.Scene();
+const motionBlurPresentationMaterial = new THREE.MeshBasicMaterial({
+  depthWrite: false,
+  depthTest: false,
+  toneMapped: false,
+  map: motionBlurBlurredTarget.texture
+});
+motionBlurPresentationScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), motionBlurPresentationMaterial));
 resizeMotionBlurTargets();
 
 const textureLoader = new THREE.TextureLoader();
@@ -683,6 +741,7 @@ function attachCarModel(carModel) {
   normalization.scale.setScalar(CAR_SCALE);
   normalization.rotation.y = Math.PI;
   normalization.add(content);
+  markCarForMotionBlurMask(normalization);
   carGroup.add(normalization);
 
   // Physics order: front right, front left, rear right, rear left.
@@ -697,6 +756,10 @@ function attachCarModel(carModel) {
     carGroup.remove(previousVisual);
     disposeCarModel(previousVisual);
   }
+}
+
+function markCarForMotionBlurMask(root) {
+  root.traverse((child) => child.layers.enable(MOTION_BLUR_CAR_LAYER));
 }
 
 function attachFallbackTruckModel() {
@@ -732,6 +795,7 @@ function attachFallbackTruckModel() {
     }
   });
 
+  markCarForMotionBlurMask(wrapper);
   carGroup.add(wrapper);
   carVisualRoot = wrapper;
 }
@@ -1367,6 +1431,14 @@ function createClouds() {
     uniform vec3 uTextRight;
     uniform vec3 uTextUp;
     uniform vec3 uTextForward;
+    uniform float uMotionBlurLinearPass;
+
+    vec4 legacyOutput(vec4 color) {
+      vec3 low = color.rgb / 12.92;
+      vec3 high = pow((color.rgb + 0.055) / 1.055, vec3(2.4));
+      vec3 linear = mix(high, low, vec3(lessThanEqual(color.rgb, vec3(0.04045))));
+      return vec4(mix(color.rgb, linear, uMotionBlurLinearPass), color.a);
+    }
 
     float hash(vec3 p) {
       p = fract(p * 0.3183099 + 0.1);
@@ -1459,7 +1531,7 @@ function createClouds() {
       vec3 backgroundCol = mix(uBaseColor, uSkyColor, skyT);
       
       if (rayDir.y <= 0.001) {
-        gl_FragColor = vec4(backgroundCol, 1.0);
+        gl_FragColor = legacyOutput(vec4(backgroundCol, 1.0));
         return;
       }
       
@@ -1467,7 +1539,7 @@ function createClouds() {
       float tFar = min(2500.0, (180.0 - uCameraPos.y) / rayDir.y);
       
       if (tNear >= tFar) {
-        gl_FragColor = vec4(backgroundCol, 1.0);
+        gl_FragColor = legacyOutput(vec4(backgroundCol, 1.0));
         return;
       }
       
@@ -1497,7 +1569,7 @@ function createClouds() {
         p += rayDir * stepSize;
       }
       
-      gl_FragColor = vec4(colorAccum + transmittance * backgroundCol, 1.0);
+      gl_FragColor = legacyOutput(vec4(colorAccum + transmittance * backgroundCol, 1.0));
     }
   `;
 
@@ -1519,7 +1591,8 @@ function createClouds() {
       uTextCenter: { value: isMobile ? new THREE.Vector3(0, 110, -450) : new THREE.Vector3(0, 110, -250) },
       uTextRight: { value: new THREE.Vector3(1, 0, 0) },
       uTextUp: { value: new THREE.Vector3(0, 1, 0) },
-      uTextForward: { value: new THREE.Vector3(0, 0, 1) }
+      uTextForward: { value: new THREE.Vector3(0, 0, 1) },
+      uMotionBlurLinearPass: { value: 0 }
     },
     transparent: true,
     depthWrite: false,
@@ -2263,6 +2336,7 @@ function createFluffyGrassMaterial(layer) {
       uTipColor2: { value: new THREE.Color(sceneSettings.grassTipColorB) },
       uFogColor: { value: scene.fog.color },
       uFogDensity: { value: scene.fog.density },
+      uMotionBlurLinearPass: { value: 0 },
       uShadowParams1: { value: new THREE.Vector4(0.0, -0.2, 1.6, 3.2) },
       uShadowParams2: { value: new THREE.Vector3(-0.3, 1.2, 0.25) }
     },
@@ -2450,6 +2524,7 @@ function createFluffyGrassMaterial(layer) {
       uniform vec3 uTipColor1;
       uniform vec3 uTipColor2;
       uniform vec3 uShadowParams2;
+      uniform float uMotionBlurLinearPass;
 
       varying vec2 vUv;
       varying vec2 vGlobalUv;
@@ -2460,6 +2535,12 @@ function createFluffyGrassMaterial(layer) {
       varying float vLodDither;
       varying float vCrushAmount;
       varying float vShadowAmount;
+
+      vec3 legacyToLinear(vec3 color) {
+        vec3 low = color / 12.92;
+        vec3 high = pow((color + 0.055) / 1.055, vec3(2.4));
+        return mix(high, low, vec3(lessThanEqual(color, vec3(0.04045))));
+      }
 
       void main() {
         vec4 grassAlpha = texture2D(uGrassAlphaTexture, vUv);
@@ -2484,7 +2565,8 @@ function createFluffyGrassMaterial(layer) {
         litGrass = mix(litGrass, litGrass * vec3(0.55, 0.64, 0.42), crushShade * 0.5);
 
         float fogFactor = 1.0 - exp(-uFogDensity * uFogDensity * vFogDepth * vFogDepth);
-        gl_FragColor = vec4(mix(litGrass, uFogColor, clamp(fogFactor, 0.0, 0.82)), 1.0);
+        vec3 finalColor = mix(litGrass, uFogColor, clamp(fogFactor, 0.0, 0.82));
+        gl_FragColor = vec4(mix(finalColor, legacyToLinear(finalColor), uMotionBlurLinearPass), 1.0);
       }
     `
   });
@@ -2517,7 +2599,8 @@ function resizeScene() {
 function resizeMotionBlurTargets() {
   const drawingBufferSize = renderer.getDrawingBufferSize(new THREE.Vector2());
   motionBlurCurrentTarget.setSize(drawingBufferSize.x, drawingBufferSize.y);
-  motionBlurHistoryTargets.forEach((target) => target.setSize(drawingBufferSize.x, drawingBufferSize.y));
+  motionBlurCarMaskTarget.setSize(drawingBufferSize.x, drawingBufferSize.y);
+  motionBlurBlurredTarget.setSize(drawingBufferSize.x, drawingBufferSize.y);
   invalidateMotionBlurHistory();
 }
 
@@ -3145,62 +3228,85 @@ function animateGrass(time) {
   });
 }
 
-function updateMotionBlur(delta) {
+function updateMotionBlur() {
   const planarSpeed = Math.hypot(player.velocity.x, player.velocity.z);
-  const isEnabled = sceneSettings.experimentalMotionBlur;
-  // This controls shutter persistence, not any object's geometry. As the
-  // chase camera follows the car, its pixels remain largely aligned between
-  // frames while the world trails naturally behind it.
-  const speedResponse = Math.pow(
-    THREE.MathUtils.clamp(planarSpeed / (carMaxSpeed * 0.48), 0, 1),
-    0.74
-  );
-  const targetWeight = isEnabled
-    ? speedResponse * THREE.MathUtils.clamp(0.16 + sceneSettings.experimentalMotionBlurStrength * 0.4, 0.2, 0.82)
-    : 0;
-  // Keep exposure duration consistent when dynamic resolution changes the
-  // frame rate. Two 30fps frames therefore carry roughly the same history as
-  // one 60fps frame at the same shutter setting.
-  motionBlurState.historyWeight = targetWeight > 0
-    ? Math.pow(targetWeight, Math.max(delta, 1 / 240) * 60)
-    : 0;
-
   window.blissMotionBlur = {
-    enabled: isEnabled,
+    enabled: sceneSettings.experimentalMotionBlur,
     speed: planarSpeed,
-    historyWeight: motionBlurState.historyWeight,
+    mode: "depth-velocity",
     multiplier: sceneSettings.experimentalMotionBlurStrength
   };
 }
 
 function renderMotionBlurredScene() {
-  const readHistory = motionBlurHistoryTargets[motionBlurState.historyIndex];
-  const writeHistory = motionBlurHistoryTargets[1 - motionBlurState.historyIndex];
-
+  setMotionBlurLinearPass(true);
   renderer.setRenderTarget(motionBlurCurrentTarget);
   renderer.render(scene, camera);
+  setMotionBlurLinearPass(false);
 
-  motionBlurCompositeMaterial.uniforms.uCurrentFrame.value = motionBlurCurrentTarget.texture;
-  motionBlurCompositeMaterial.uniforms.uHistoryFrame.value = readHistory.texture;
-  motionBlurCompositeMaterial.uniforms.uHistoryWeight.value = motionBlurState.historyValid
-    ? motionBlurState.historyWeight
-    : 0;
-  renderer.setRenderTarget(writeHistory);
+  renderCarMotionBlurMask();
+
+  camera.updateMatrixWorld();
+  motionBlurState.currentViewProjection.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+  if (!motionBlurState.initialized) {
+    motionBlurState.previousViewProjection.copy(motionBlurState.currentViewProjection);
+  }
+
+  motionBlurCompositeMaterial.uniforms.uColorTexture.value = motionBlurCurrentTarget.texture;
+  motionBlurCompositeMaterial.uniforms.uDepthTexture.value = motionBlurCurrentTarget.depthTexture;
+  motionBlurCompositeMaterial.uniforms.uCarMaskTexture.value = motionBlurCarMaskTarget.texture;
+  motionBlurCompositeMaterial.uniforms.uInverseProjection.value.copy(camera.projectionMatrixInverse);
+  motionBlurCompositeMaterial.uniforms.uInverseView.value.copy(camera.matrixWorld);
+  motionBlurCompositeMaterial.uniforms.uPreviousViewProjection.value.copy(motionBlurState.previousViewProjection);
+  motionBlurCompositeMaterial.uniforms.uShutter.value = sceneSettings.experimentalMotionBlurStrength;
+  renderer.setRenderTarget(motionBlurBlurredTarget);
   renderer.render(motionBlurPostScene, motionBlurPostCamera);
 
-  motionBlurCompositeMaterial.uniforms.uCurrentFrame.value = writeHistory.texture;
-  motionBlurCompositeMaterial.uniforms.uHistoryFrame.value = writeHistory.texture;
-  motionBlurCompositeMaterial.uniforms.uHistoryWeight.value = 0;
+  motionBlurPresentationMaterial.map = motionBlurBlurredTarget.texture;
   renderer.setRenderTarget(null);
-  renderer.render(motionBlurPostScene, motionBlurPostCamera);
+  renderer.render(motionBlurPresentationScene, motionBlurPostCamera);
 
-  motionBlurState.historyIndex = 1 - motionBlurState.historyIndex;
-  motionBlurState.historyValid = true;
+  motionBlurState.previousViewProjection.copy(motionBlurState.currentViewProjection);
+  motionBlurState.initialized = true;
+}
+
+function setMotionBlurLinearPass(isActive) {
+  const value = isActive ? 1 : 0;
+  grassMaterials.forEach((material) => {
+    if (material.uniforms.uMotionBlurLinearPass) {
+      material.uniforms.uMotionBlurLinearPass.value = value;
+    }
+  });
+  cloudMaterials.forEach((material) => {
+    if (material.uniforms.uMotionBlurLinearPass) {
+      material.uniforms.uMotionBlurLinearPass.value = value;
+    }
+  });
+}
+
+function renderCarMotionBlurMask() {
+  const originalBackground = scene.background;
+  const originalOverrideMaterial = scene.overrideMaterial;
+  const originalCameraLayerMask = camera.layers.mask;
+  const originalClearColor = renderer.getClearColor(new THREE.Color());
+  const originalClearAlpha = renderer.getClearAlpha();
+
+  scene.background = null;
+  scene.overrideMaterial = motionBlurCarMaskMaterial;
+  camera.layers.set(MOTION_BLUR_CAR_LAYER);
+  renderer.setClearColor(0x000000, 0);
+  renderer.setRenderTarget(motionBlurCarMaskTarget);
+  renderer.clear();
+  renderer.render(scene, camera);
+
+  camera.layers.mask = originalCameraLayerMask;
+  scene.overrideMaterial = originalOverrideMaterial;
+  scene.background = originalBackground;
+  renderer.setClearColor(originalClearColor, originalClearAlpha);
 }
 
 function invalidateMotionBlurHistory() {
-  motionBlurState.historyValid = false;
-  motionBlurState.historyWeight = 0;
+  motionBlurState.initialized = false;
 }
 
 function updateCarDisplacementBasis() {
@@ -3337,11 +3443,12 @@ function animate() {
   animateGrass(clock.elapsedTime);
   animateCarFade();
   updateJoystickUI();
-  updateMotionBlur(delta);
+  updateMotionBlur();
   if (sceneSettings.experimentalMotionBlur) {
     renderMotionBlurredScene();
   } else {
     invalidateMotionBlurHistory();
+    setMotionBlurLinearPass(false);
     renderer.render(scene, camera);
   }
 }
