@@ -697,6 +697,28 @@ body.scene-started .wallpaper-screen {
   gap: 8px;
 }
 
+.bottom-right-controls {
+  position: absolute;
+  bottom: 18px;
+  right: 18px;
+  z-index: 10;
+  display: flex;
+  align-items: flex-end;
+}
+
+.footer-text {
+  color: rgba(255, 255, 255, 0.48);
+  font-size: 12px;
+  text-decoration: none;
+  letter-spacing: 0.5px;
+  transition: color 0.2s ease;
+  line-height: 32px;
+}
+
+.footer-text:hover {
+  color: rgba(255, 255, 255, 0.8);
+}
+
 .attribution-container,
 .volume-container,
 .settings-container {
