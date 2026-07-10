@@ -75,6 +75,8 @@
       </label>
 
       <button id="export-settings" type="button">Export settings</button>
+      <button id="save-spawn" type="button">Save spawn point</button>
+      <textarea id="spawn-output" readonly aria-label="Saved spawn point JSON"></textarea>
       <textarea id="settings-output" readonly aria-label="Exported scene settings"></textarea>
     </aside>
 
@@ -115,9 +117,11 @@
       <button id="attribution-btn" class="attribution-btn" aria-label="Show attribution">?</button>
       <div id="attribution-popup" class="attribution-popup">
         "Toyota Levin AE85 Grandfather" (<a href="https://skfb.ly/pEC9o" target="_blank" rel="noopener noreferrer">https://skfb.ly/pEC9o</a>) by GagoSahi is licensed under Creative Commons Attribution (<a href="http://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">http://creativecommons.org/licenses/by/4.0/</a>).<br><br>
-        Three.js grass inspiration by <a href="https://github.com/thebenezer" target="_blank" rel="noopener noreferrer">thebenezer</a>.
+        Three.js grass inspiration by <a href="https://github.com/thebenezer" target="_blank" rel="noopener noreferrer">thebenezer</a>.<br><br>
+        Background music: reidenshi // november 8.
       </div>
     </div>
+    <audio id="bgm" src="bgm.mp3" loop preload="auto"></audio>
   </main>
 
   <script src="vendor/three.min.js?v=0.150.1"></script>

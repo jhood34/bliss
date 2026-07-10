@@ -134,7 +134,24 @@ textarea {
   font-size: 11px;
 }
 
+#spawn-output {
+  display: none;
+  width: 100%;
+  min-height: 94px;
+  resize: vertical;
+  border: 1px solid rgba(255, 255, 255, 0.32);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.32);
+  color: #ffffff;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 11px;
+}
+
 #settings-output.has-settings {
+  display: block;
+}
+
+#spawn-output.has-spawn {
   display: block;
 }
 

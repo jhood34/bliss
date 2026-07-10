@@ -16,6 +16,7 @@ let physicsAccumulator = 0;
 
 const canvas = document.querySelector("#scene");
 const wallpaperEntry = document.querySelector("#wallpaper-entry");
+const bgm = document.querySelector("#bgm");
 const tuningPanel = document.querySelector("#tuning-panel");
 const fpsMeter = document.querySelector("#fps-meter");
 const fpsValue = document.querySelector("#fps-value");
@@ -39,8 +40,10 @@ const tuningControls = {
   fogDensity: document.querySelector("#fog-density-control"),
   windStrength: document.querySelector("#wind-strength-control"),
   showFps: document.querySelector("#show-fps-control"),
-  exportSettings: document.querySelector("#export-settings")
+  exportSettings: document.querySelector("#export-settings"),
+  saveSpawn: document.querySelector("#save-spawn")
 };
+const spawnOutput = document.querySelector("#spawn-output");
 
 const sceneSettings = {
   grassHeight: 1.01,
@@ -130,12 +133,13 @@ function terrainHeight(x, z) {
 }
 
 const player = {
-  position: new THREE.Vector3(0, terrainHeight(0, 102) + 2.2, 102),
+  position: new THREE.Vector3(-55.17, -14.6419, 18.7405),
   velocity: new THREE.Vector3(0, 0, 0),
   pitch: -0.15,
-  yaw: 0,
-  camYawOffset: 0,
-  camPitchOffset: 0,
+  // Yaw extracted from spawn quaternion (Y component via atan2)
+  yaw: 2 * Math.atan2(-0.098041, 0.992882),
+  camYawOffset: -0.5061,
+  camPitchOffset: 0.231,
   isOnGround: false,
 };
 
@@ -170,10 +174,10 @@ const cameraFollow = {
   target: new THREE.Vector3()
 };
 const cameraZoom = {
-  distance: 12,
-  targetDistance: 12,
-  fov: DEFAULT_CAMERA_FOV,
-  targetFov: DEFAULT_CAMERA_FOV
+  distance: 15.897,
+  targetDistance: 15.897,
+  fov: 54.593,
+  targetFov: 54.593
 };
 const cameraDesiredPosition = new THREE.Vector3();
 const cameraDesiredTarget = new THREE.Vector3();
@@ -587,7 +591,8 @@ function setupVehiclePhysics() {
   }
 
   const rigidBodyDesc = RAPIER.RigidBodyDesc.dynamic()
-    .setTranslation(player.position.x, player.position.y + 1.0, player.position.z)
+    .setTranslation(-55.17, -14.6419, 18.7405)
+    .setRotation({ x: 0.026907, y: -0.098041, z: 0.062049, w: 0.992882 })
     .setLinearDamping(0.12)
     .setAngularDamping(1.65);
   carBody = physicsWorld.createRigidBody(rigidBodyDesc);
@@ -651,6 +656,10 @@ function initializeTuningPanel() {
     tuningControls.showFps.addEventListener("change", (e) => {
       document.body.classList.toggle("show-fps", e.target.checked);
     });
+  }
+
+  if (tuningControls.saveSpawn) {
+    tuningControls.saveSpawn.addEventListener("click", saveSpawnPoint);
   }
 
   if (tuningControls.exportSettings) {
@@ -847,6 +856,53 @@ function setExportStatus(message) {
   setExportStatus.timeoutId = window.setTimeout(() => {
     exportStatus.textContent = "";
   }, 1800);
+}
+
+async function saveSpawnPoint() {
+  // Prefer the physics body position/rotation for accuracy; fall back to
+  // the visual group if physics hasn't initialised yet.
+  let carPos, carQuat;
+  if (carBody) {
+    const p = carBody.translation();
+    const r = carBody.rotation();
+    carPos = { x: p.x, y: p.y, z: p.z };
+    carQuat = { x: r.x, y: r.y, z: r.z, w: r.w };
+  } else if (carGroup) {
+    carPos = { x: carGroup.position.x, y: carGroup.position.y, z: carGroup.position.z };
+    const q = carGroup.quaternion;
+    carQuat = { x: q.x, y: q.y, z: q.z, w: q.w };
+  } else {
+    carPos = { x: player.position.x, y: player.position.y, z: player.position.z };
+    carQuat = { x: 0, y: 0, z: 0, w: 1 };
+  }
+
+  const spawn = {
+    car: {
+      position: { x: +carPos.x.toFixed(4), y: +carPos.y.toFixed(4), z: +carPos.z.toFixed(4) },
+      quaternion: { x: +carQuat.x.toFixed(6), y: +carQuat.y.toFixed(6), z: +carQuat.z.toFixed(6), w: +carQuat.w.toFixed(6) }
+    },
+    camera: {
+      yawOffset: +player.camYawOffset.toFixed(4),
+      pitchOffset: +player.camPitchOffset.toFixed(4),
+      distance: +cameraZoom.targetDistance.toFixed(3),
+      fov: +cameraZoom.targetFov.toFixed(3)
+    }
+  };
+
+  const payload = JSON.stringify(spawn, null, 2);
+
+  if (spawnOutput) {
+    spawnOutput.value = payload;
+    spawnOutput.classList.add("has-spawn");
+    spawnOutput.select();
+  }
+
+  try {
+    await navigator.clipboard.writeText(payload);
+    setExportStatus("Spawn copied!");
+  } catch {
+    setExportStatus("Select & copy");
+  }
 }
 
 function createLights() {
@@ -2210,6 +2266,7 @@ function normalizeMovementCode(event) {
 
 async function lockPointer() {
   document.body.classList.add("scene-started");
+  startBgm();
 
   if (!canvas.requestPointerLock || isTouchFirstDevice()) {
     return;
@@ -2220,6 +2277,31 @@ async function lockPointer() {
   } catch {
     document.body.classList.remove("is-locked");
   }
+}
+
+function startBgm() {
+  if (!bgm || !bgm.paused) {
+    return;
+  }
+
+  bgm.volume = 0;
+  bgm.play().then(() => {
+    // Fade in over 3 seconds
+    const targetVolume = 0.6;
+    const duration = 3000;
+    const startTime = performance.now();
+
+    function fadeTick(now) {
+      const elapsed = now - startTime;
+      bgm.volume = Math.min(targetVolume, (elapsed / duration) * targetVolume);
+      if (elapsed < duration) {
+        requestAnimationFrame(fadeTick);
+      }
+    }
+    requestAnimationFrame(fadeTick);
+  }).catch(() => {
+    // Autoplay blocked — silently ignore
+  });
 }
 
 function isTouchFirstDevice() {
