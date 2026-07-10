@@ -2525,6 +2525,10 @@ async function lockPointer() {
   document.body.classList.add("scene-started");
   startBgm();
 
+  if (window.sceneStartedTime === undefined) {
+    window.sceneStartedTime = clock.elapsedTime;
+  }
+
   if (!canvas.requestPointerLock || isTouchFirstDevice()) {
     return;
   }
@@ -2944,8 +2948,13 @@ function animateClouds(delta) {
       cloudMat.uniforms.uTime.value = clock.elapsedTime;
       cloudMat.uniforms.uCameraPos.value.copy(camera.position);
       
-      // Animate text progress from 0.0 to 1.1 over the first 5 seconds
-      cloudMat.uniforms.uTextProgress.value = Math.min(1.1, clock.elapsedTime / 5.0);
+      if (cloudMat.uniforms.uTextProgress) {
+        if (window.sceneStartedTime !== undefined) {
+          cloudMat.uniforms.uTextProgress.value = Math.min(1.1, (clock.elapsedTime - window.sceneStartedTime) / 5.0);
+        } else {
+          cloudMat.uniforms.uTextProgress.value = 0.0;
+        }
+      }
       cloudMat.uniforms.uBaseColor.value.set(sceneSettings.fogColor);
       cloudMat.uniforms.uSkyColor.value.set(sceneSettings.skyColor);
     }
