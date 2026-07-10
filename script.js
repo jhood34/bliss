@@ -275,6 +275,7 @@ async function startScene() {
   // canvas.addEventListener("touchcancel", handleTouchEnd, { passive: false });
 
   wallpaperEntry.addEventListener("click", lockPointer);
+  canvas.addEventListener("click", togglePointerLock);
   initializeTuningPanel();
   initializeQualityControl();
   initializeVolumeControl();
@@ -2357,6 +2358,22 @@ async function lockPointer() {
   }
 }
 
+async function togglePointerLock() {
+  if (isTouchFirstDevice() || !canvas.requestPointerLock) {
+    return;
+  }
+
+  if (document.pointerLockElement === canvas) {
+    document.exitPointerLock();
+  } else {
+    try {
+      await canvas.requestPointerLock();
+    } catch {
+      document.body.classList.remove("is-locked");
+    }
+  }
+}
+
 function startBgm() {
   if (!bgm || !bgm.paused) {
     return;
@@ -2528,8 +2545,12 @@ function readVehicleInput() {
 
 function stepVehiclePhysics(vehicleInput, fixedDelta) {
   if (vehicleController && carBody) {
+    if (vehicleInput.forwardInput !== 0 || vehicleInput.sideInput !== 0) {
+      carBody.wakeUp();
+    }
+
     physicsThrottle += (vehicleInput.forwardInput - physicsThrottle) * Math.min(1, fixedDelta * 7.0);
-    const engineForce = physicsThrottle * 2800.0;
+    const engineForce = physicsThrottle * -2800.0;
 
     // Only apply idle braking when truly coasting (no input and near-zero throttle)
     const isCoasting = vehicleInput.forwardInput === 0 && Math.abs(physicsThrottle) < 0.05;
@@ -2701,12 +2722,26 @@ function updateChaseCamera(delta) {
   const horizontalDistance = Math.cos(player.camPitchOffset) * chaseDistance;
   const verticalOffset = Math.sin(player.camPitchOffset) * chaseDistance;
 
-  cameraDesiredTarget.set(player.position.x, player.position.y + 1.15, player.position.z);
+  // The car's origin is at the rear axle. Shift the camera's focus point 
+  // forward by 1.8 meters so it rotates around the center of the vehicle.
+  const carCenter = new THREE.Vector3().copy(player.position);
+  const forwardX = Math.sin(cameraFollow.vehicleYaw);
+  const forwardZ = Math.cos(cameraFollow.vehicleYaw);
+  // Note: vehicleYaw uses atan2(-x, -z), so forward is (-sin, -cos).
+  carCenter.x -= forwardX * 1.8;
+  carCenter.z -= forwardZ * 1.8;
+
+  cameraDesiredTarget.set(carCenter.x, carCenter.y + 1.15, carCenter.z);
   cameraDesiredPosition.set(
-    player.position.x + Math.sin(orbitYaw) * horizontalDistance,
-    player.position.y + chaseHeight - verticalOffset,
-    player.position.z + Math.cos(orbitYaw) * horizontalDistance
+    carCenter.x + Math.sin(orbitYaw) * horizontalDistance,
+    carCenter.y + chaseHeight - verticalOffset,
+    carCenter.z + Math.cos(orbitYaw) * horizontalDistance
   );
+
+  const minCameraY = terrainHeight(cameraDesiredPosition.x, cameraDesiredPosition.z) + 0.5;
+  if (cameraDesiredPosition.y < minCameraY) {
+    cameraDesiredPosition.y = minCameraY;
+  }
 
   if (!cameraFollow.initialized) {
     camera.position.copy(cameraDesiredPosition);
