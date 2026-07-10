@@ -1231,7 +1231,7 @@ function createGrassTexture() {
 
 function createCloudTextTexture(isMobile) {
   const textureCanvas = document.createElement("canvas");
-  textureCanvas.width = isMobile ? 512 : 1024;
+  textureCanvas.width = 1024;
   textureCanvas.height = isMobile ? 512 : 256;
   const context = textureCanvas.getContext("2d");
   
@@ -1243,9 +1243,9 @@ function createCloudTextTexture(isMobile) {
   
   if (isMobile) {
     context.textAlign = "left";
-    context.font = "bold 110px sans-serif";
-    context.fillText("a blissful", 40, textureCanvas.height / 2 - 60);
-    context.fillText("drive", 40, textureCanvas.height / 2 + 60);
+    context.font = "bold 140px sans-serif";
+    context.fillText("a blissful", 140, textureCanvas.height / 2 - 80);
+    context.fillText("drive", 140, textureCanvas.height / 2 + 80);
   } else {
     context.textAlign = "center";
     context.font = "bold 130px sans-serif";
@@ -1436,9 +1436,9 @@ function createClouds() {
       uSunColor: { value: new THREE.Color(0xffffff) },
       uRaymarchSteps: { value: QUALITY_PRESETS[sceneSettings.qualityLevel].cloudSteps },
       uCloudText: { value: createCloudTextTexture(isMobile) },
-      uTextBounds: { value: isMobile ? new THREE.Vector2(300.0, 300.0) : new THREE.Vector2(500.0, 120.0) },
+      uTextBounds: { value: isMobile ? new THREE.Vector2(250.0, 125.0) : new THREE.Vector2(500.0, 120.0) },
       uTextProgress: { value: 0.0 },
-      uTextCenter: { value: isMobile ? new THREE.Vector3(0, 110, -400) : new THREE.Vector3(0, 110, -250) },
+      uTextCenter: { value: isMobile ? new THREE.Vector3(0, 110, -450) : new THREE.Vector3(0, 110, -250) },
       uTextRight: { value: new THREE.Vector3(1, 0, 0) },
       uTextUp: { value: new THREE.Vector3(0, 1, 0) },
       uTextForward: { value: new THREE.Vector3(0, 0, 1) }
