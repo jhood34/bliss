@@ -45,6 +45,7 @@ const tuningControls = {
   fogDensity: document.querySelector("#fog-density-control"),
   windStrength: document.querySelector("#wind-strength-control"),
   showFps: document.querySelector("#show-fps-control"),
+  experimentalMotionBlur: document.querySelector("#experimental-motion-blur-control"),
   cloudTextPosX: document.querySelector("#cloud-text-x-control"),
   cloudTextPosY: document.querySelector("#cloud-text-y-control"),
   cloudTextPosZ: document.querySelector("#cloud-text-z-control"),
@@ -66,6 +67,7 @@ const sceneSettings = {
   fogColor: "#e0efff",
   fogDensity: 0.0072,
   windStrength: 1,
+  experimentalMotionBlur: false,
   qualityLevel: 3,
   cloudTextPosX: 154,
   cloudTextPosY: 117,
@@ -103,6 +105,10 @@ const trailStampPositionRightUniforms = Array.from({ length: MAX_SHADER_TRAIL_ST
 const trailStampForwardFadeUniforms = Array.from({ length: MAX_SHADER_TRAIL_STAMPS }, () => new THREE.Vector4(0, 1, 0, 0));
 const carRight2D = new THREE.Vector2(1, 0);
 const carForward2D = new THREE.Vector2(0, 1);
+const grassMotionBlur = {
+  direction: new THREE.Vector2(0, -1),
+  strength: 0
+};
 
 const renderer = new THREE.WebGLRenderer({
   canvas,
@@ -372,7 +378,9 @@ function updateVolumeIcon(v) {
 // ============================================================================
 // START 3D CAR + RAPIER VEHICLE LOGIC
 // ============================================================================
-const CAR_MODEL_PATH = "car/toyota_levin_ae85_grandfather/scene.gltf";
+// Ultra uses a clean Blender export with SketchUp's edge-overlay meshes
+// removed at the asset level. The source .gltf is retained in the car folder.
+const CAR_MODEL_PATH = "car/toyota_levin_ae85_grandfather/lods/levin_lod_5_clean.glb";
 const CAR_MODEL_PATHS = [
   null,
   "car/toyota_levin_ae85_grandfather/lods/levin_lod_1.glb",
@@ -762,6 +770,10 @@ function initializeTuningPanel() {
     });
   }
 
+  if (tuningControls.experimentalMotionBlur) {
+    tuningControls.experimentalMotionBlur.addEventListener("change", updateSettingsFromControls);
+  }
+
   if (tuningControls.saveSpawn) {
     tuningControls.saveSpawn.addEventListener("click", saveSpawnPoint);
   }
@@ -876,6 +888,7 @@ function syncControlsFromSettings() {
   if (tuningControls.fogColor) tuningControls.fogColor.value = sceneSettings.fogColor;
   if (tuningControls.fogDensity) tuningControls.fogDensity.value = sceneSettings.fogDensity;
   if (tuningControls.windStrength) tuningControls.windStrength.value = sceneSettings.windStrength;
+  if (tuningControls.experimentalMotionBlur) tuningControls.experimentalMotionBlur.checked = sceneSettings.experimentalMotionBlur;
   if (tuningControls.cloudTextPosX) tuningControls.cloudTextPosX.value = sceneSettings.cloudTextPosX;
   if (tuningControls.cloudTextPosY) tuningControls.cloudTextPosY.value = sceneSettings.cloudTextPosY;
   if (tuningControls.cloudTextPosZ) tuningControls.cloudTextPosZ.value = sceneSettings.cloudTextPosZ;
@@ -894,6 +907,9 @@ function updateSettingsFromControls() {
   sceneSettings.fogColor = readColorControl(tuningControls.fogColor, sceneSettings.fogColor);
   sceneSettings.fogDensity = readNumberControl(tuningControls.fogDensity, sceneSettings.fogDensity);
   sceneSettings.windStrength = readNumberControl(tuningControls.windStrength, sceneSettings.windStrength);
+  if (tuningControls.experimentalMotionBlur) {
+    sceneSettings.experimentalMotionBlur = tuningControls.experimentalMotionBlur.checked;
+  }
 
   applySceneSettings();
 }
@@ -930,6 +946,7 @@ function applySceneSettings() {
     material.uniforms.uTipColor2.value.set(sceneSettings.grassTipColorB);
     material.uniforms.uFogColor.value.set(sceneSettings.fogColor);
     material.uniforms.uFogDensity.value = sceneSettings.fogDensity;
+    material.uniforms.uMotionBlurEnabled.value = sceneSettings.experimentalMotionBlur ? 1 : 0;
   });
 
   if (distantGrassMaterial) {
@@ -2185,6 +2202,9 @@ function createFluffyGrassMaterial(layer) {
       uTipColor2: { value: new THREE.Color(sceneSettings.grassTipColorB) },
       uFogColor: { value: scene.fog.color },
       uFogDensity: { value: scene.fog.density },
+      uMotionBlurEnabled: { value: sceneSettings.experimentalMotionBlur ? 1 : 0 },
+      uMotionBlurDirection: { value: grassMotionBlur.direction.clone() },
+      uMotionBlurStrength: { value: 0 },
       uShadowParams1: { value: new THREE.Vector4(0.0, -0.2, 1.6, 3.2) },
       uShadowParams2: { value: new THREE.Vector3(-0.3, 1.2, 0.25) }
     },
@@ -2206,6 +2226,9 @@ function createFluffyGrassMaterial(layer) {
       uniform vec4 uTrailStampPositionRight[12];
       uniform vec4 uTrailStampForwardFade[12];
       uniform int uTrailStampCount;
+      uniform float uMotionBlurEnabled;
+      uniform vec2 uMotionBlurDirection;
+      uniform float uMotionBlurStrength;
       uniform vec4 uShadowParams1;
       uniform vec3 uShadowParams2;
 
@@ -2345,6 +2368,13 @@ function createFluffyGrassMaterial(layer) {
         float sinWave = sin(50.0 * dot(windDirection, globalUv) + noise.g * 5.5 + uTime * 1.0) * 0.1 * uWindStrength * heightFactor;
         modelPosition.x += sinWave;
         modelPosition.z += sinWave;
+
+        // The chase camera moves with the car, so the grass streaks backwards
+        // relative to travel. This shader is assigned only to grass, leaving
+        // the car's silhouette clean even at full speed.
+        float motionBlurMask = mix(0.2, 1.0, smoothstep(0.0, 0.32, heightFactor));
+        float motionBlurSpread = (uv.x - 0.5) * 2.0 * motionBlurMask * uMotionBlurStrength * uMotionBlurEnabled;
+        modelPosition.xz += uMotionBlurDirection * motionBlurSpread;
 
         // Height variation from noise (FluffyGrass approach)
         modelPosition.y += exp(texture2D(uNoiseTexture, globalUv * uNoiseScale).r) * 0.5 * heightFactor * uGrassHeightMultiplier;
@@ -3016,8 +3046,9 @@ function animateClouds(delta) {
   }
 }
 
-function animateGrass(time) {
+function animateGrass(time, delta) {
   updateCarDisplacementBasis();
+  updateGrassMotionBlur(delta);
 
   const grassFlatteningEnabled = sceneSettings.qualityLevel >= 4;
 
@@ -3055,7 +3086,33 @@ function animateGrass(time) {
     material.uniforms.uCarForward.value.copy(carForward2D);
     material.uniforms.uGrassFlatteningEnabled.value = grassFlatteningEnabled ? 1 : 0;
     material.uniforms.uTrailStampCount.value = grassFlatteningEnabled ? trailStamps.length : 0;
+    material.uniforms.uMotionBlurEnabled.value = sceneSettings.experimentalMotionBlur ? 1 : 0;
+    material.uniforms.uMotionBlurDirection.value.copy(grassMotionBlur.direction);
+    material.uniforms.uMotionBlurStrength.value = grassMotionBlur.strength;
   });
+}
+
+function updateGrassMotionBlur(delta) {
+  const planarSpeed = Math.hypot(player.velocity.x, player.velocity.z);
+  const isEnabled = sceneSettings.experimentalMotionBlur;
+  // The low end stays still; at top speed the extra grass-card width remains
+  // below 0.7m, keeping the effect deliberately subtle.
+  const targetStrength = isEnabled
+    ? THREE.MathUtils.smoothstep(planarSpeed, 7, carMaxSpeed * 0.78) * 0.64
+    : 0;
+  const response = 1 - Math.exp(-(targetStrength > grassMotionBlur.strength ? 12 : 7) * delta);
+  grassMotionBlur.strength += (targetStrength - grassMotionBlur.strength) * response;
+
+  if (planarSpeed > 0.15) {
+    // Static ground flows backward in the chase camera.
+    grassMotionBlur.direction.set(-player.velocity.x, -player.velocity.z).normalize();
+  }
+
+  window.blissMotionBlur = {
+    enabled: isEnabled,
+    speed: planarSpeed,
+    strength: grassMotionBlur.strength
+  };
 }
 
 function updateCarDisplacementBasis() {
@@ -3189,7 +3246,7 @@ function animate() {
   updateDistantGrass();
   updateGrassLayerVisibility();
   animateClouds(delta);
-  animateGrass(clock.elapsedTime);
+  animateGrass(clock.elapsedTime, delta);
   animateCarFade();
   updateJoystickUI();
   renderer.render(scene, camera);
@@ -3216,5 +3273,3 @@ function updateFpsMeter(delta) {
   fpsBar.style.transform = `scaleX(${fpsRatio})`;
   fpsBar.style.background = fpsStats.displayFps < 30 ? "#ff4444" : fpsStats.displayFps < 50 ? "#ffaa00" : "#44ff44";
 }
-
-
