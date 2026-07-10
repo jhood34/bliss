@@ -1,4 +1,4 @@
-import RAPIER from "./node_modules/@dimforge/rapier3d-compat/rapier.es.js";
+import RAPIER from "https://cdn.jsdelivr.net/npm/@dimforge/rapier3d-compat@0.12.0/rapier.es.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 
 const PHYSICS_INIT_TIMEOUT_MS = 2200;
