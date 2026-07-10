@@ -2943,11 +2943,21 @@ function updateChaseCamera(delta) {
   const carCenter = new THREE.Vector3().copy(player.position);
   const forwardX = Math.sin(cameraFollow.vehicleYaw);
   const forwardZ = Math.cos(cameraFollow.vehicleYaw);
-  // Note: vehicleYaw uses atan2(-x, -z), so forward is (-sin, -cos).
   carCenter.x -= forwardX * 1.8;
   carCenter.z -= forwardZ * 1.8;
 
-  cameraDesiredTarget.set(carCenter.x, carCenter.y + 1.15, carCenter.z);
+  if (!cameraFollow.lastPos) cameraFollow.lastPos = new THREE.Vector3().copy(player.position);
+  if (!cameraFollow.velocity) cameraFollow.velocity = new THREE.Vector3();
+  const currentVel = new THREE.Vector3().copy(player.position).sub(cameraFollow.lastPos).divideScalar(Math.max(delta, 0.001));
+  cameraFollow.lastPos.copy(player.position);
+  cameraFollow.velocity.lerp(currentVel, 1 - Math.exp(-4 * delta));
+  
+  const lookAhead = cameraFollow.velocity.clone().multiplyScalar(0.5);
+  if (lookAhead.lengthSq() > 400) {
+    lookAhead.setLength(20);
+  }
+
+  cameraDesiredTarget.set(carCenter.x + lookAhead.x, carCenter.y + 1.15, carCenter.z + lookAhead.z);
   cameraDesiredPosition.set(
     carCenter.x + Math.sin(orbitYaw) * horizontalDistance,
     carCenter.y + chaseHeight - verticalOffset,
