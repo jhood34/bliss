@@ -18,8 +18,6 @@ const canvas = document.querySelector("#scene");
 const wallpaperEntry = document.querySelector("#wallpaper-entry");
 const bgm = document.querySelector("#bgm");
 const volumeBtn = document.querySelector("#volume-btn");
-const volumePopup = document.querySelector("#volume-popup");
-const volumeSlider = document.querySelector("#volume-slider");
 const volumeIcon = document.querySelector("#volume-icon");
 const settingsBtn = document.querySelector("#settings-btn");
 const tuningPanel = document.querySelector("#tuning-panel");
@@ -448,39 +446,19 @@ function initializeSettingsBtn() {
 }
 
 function initializeVolumeControl() {
+  if (!volumeBtn || !volumeIcon) return;
 
-  if (!volumeBtn || !volumePopup || !volumeSlider) {
-    return;
-  }
-
-  // Toggle popup open/closed on button click
   volumeBtn.addEventListener("click", (e) => {
     e.stopPropagation();
-    const isOpen = volumePopup.classList.toggle("is-open");
-    volumeBtn.setAttribute("aria-expanded", String(isOpen));
-  });
-
-  // Close when clicking outside
-  document.addEventListener("click", (e) => {
-    if (!volumeBtn.contains(e.target) && !volumePopup.contains(e.target)) {
-      volumePopup.classList.remove("is-open");
-      volumeBtn.setAttribute("aria-expanded", "false");
-    }
-  });
-
-  // Stop pointer events from leaking to the scene
-  volumePopup.addEventListener("click", (e) => e.stopPropagation());
-
-  // Sync slider → BGM volume + update icon
-  volumeSlider.addEventListener("input", () => {
-    const v = Math.min(1, Math.max(0, parseFloat(volumeSlider.value)));
     if (bgm) {
-      bgm.volume = v;
+      bgm.muted = !bgm.muted;
+      updateVolumeIcon(bgm.muted ? 0 : bgm.volume);
     }
-    updateVolumeIcon(v);
   });
 
-  updateVolumeIcon(parseFloat(volumeSlider.value));
+  if (bgm) {
+    updateVolumeIcon(bgm.muted ? 0 : bgm.volume);
+  }
 }
 
 // SVG paths for muted / low / high volume states
@@ -2876,9 +2854,8 @@ function startBgm() {
       bgm.volume = Math.min(1, Math.max(0, (elapsed / duration) * targetVolume));
       if (elapsed < duration) {
         requestAnimationFrame(fadeTick);
-      } else if (volumeSlider) {
-        volumeSlider.value = String(targetVolume);
-        updateVolumeIcon(targetVolume);
+      } else {
+        updateVolumeIcon(bgm.muted ? 0 : targetVolume);
       }
     }
     requestAnimationFrame(fadeTick);
