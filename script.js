@@ -17,6 +17,11 @@ let physicsAccumulator = 0;
 const canvas = document.querySelector("#scene");
 const wallpaperEntry = document.querySelector("#wallpaper-entry");
 const bgm = document.querySelector("#bgm");
+const volumeBtn = document.querySelector("#volume-btn");
+const volumePopup = document.querySelector("#volume-popup");
+const volumeSlider = document.querySelector("#volume-slider");
+const volumeIcon = document.querySelector("#volume-icon");
+const settingsBtn = document.querySelector("#settings-btn");
 const tuningPanel = document.querySelector("#tuning-panel");
 const fpsMeter = document.querySelector("#fps-meter");
 const fpsValue = document.querySelector("#fps-value");
@@ -272,8 +277,81 @@ async function startScene() {
   wallpaperEntry.addEventListener("click", lockPointer);
   initializeTuningPanel();
   initializeQualityControl();
+  initializeVolumeControl();
+  initializeSettingsBtn();
 
   animate();
+}
+
+function initializeSettingsBtn() {
+  if (!settingsBtn || !qualityControl) {
+    return;
+  }
+
+  settingsBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const isOpen = qualityControl.classList.toggle("is-visible");
+    settingsBtn.setAttribute("aria-expanded", String(isOpen));
+  });
+
+  // Close when clicking outside both the button and the quality control
+  document.addEventListener("click", (e) => {
+    if (!settingsBtn.contains(e.target) && !qualityControl.contains(e.target)) {
+      qualityControl.classList.remove("is-visible");
+      settingsBtn.setAttribute("aria-expanded", "false");
+    }
+  });
+
+  qualityControl.addEventListener("click", (e) => e.stopPropagation());
+}
+
+function initializeVolumeControl() {
+
+  if (!volumeBtn || !volumePopup || !volumeSlider) {
+    return;
+  }
+
+  // Toggle popup open/closed on button click
+  volumeBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const isOpen = volumePopup.classList.toggle("is-open");
+    volumeBtn.setAttribute("aria-expanded", String(isOpen));
+  });
+
+  // Close when clicking outside
+  document.addEventListener("click", (e) => {
+    if (!volumeBtn.contains(e.target) && !volumePopup.contains(e.target)) {
+      volumePopup.classList.remove("is-open");
+      volumeBtn.setAttribute("aria-expanded", "false");
+    }
+  });
+
+  // Stop pointer events from leaking to the scene
+  volumePopup.addEventListener("click", (e) => e.stopPropagation());
+
+  // Sync slider → BGM volume + update icon
+  volumeSlider.addEventListener("input", () => {
+    const v = parseFloat(volumeSlider.value);
+    if (bgm) {
+      bgm.volume = v;
+    }
+    updateVolumeIcon(v);
+  });
+
+  updateVolumeIcon(parseFloat(volumeSlider.value));
+}
+
+// SVG paths for muted / low / high volume states
+const VOLUME_ICON_PATHS = {
+  mute: "M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z",
+  low:  "M18.5 12c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM5 9v6h4l5 5V4L9 9H5z",
+  high: "M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"
+};
+
+function updateVolumeIcon(v) {
+  if (!volumeIcon) return;
+  const key = v === 0 ? "mute" : v < 0.5 ? "low" : "high";
+  volumeIcon.querySelector("path").setAttribute("d", VOLUME_ICON_PATHS[key]);
 }
 
 // ============================================================================
@@ -2296,6 +2374,9 @@ function startBgm() {
       bgm.volume = Math.min(targetVolume, (elapsed / duration) * targetVolume);
       if (elapsed < duration) {
         requestAnimationFrame(fadeTick);
+      } else if (volumeSlider) {
+        volumeSlider.value = String(targetVolume);
+        updateVolumeIcon(targetVolume);
       }
     }
     requestAnimationFrame(fadeTick);

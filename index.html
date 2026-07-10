@@ -113,12 +113,34 @@
       <img src="bliss.jpeg" alt="">
     </button>
 
-    <div class="attribution-container">
-      <button id="attribution-btn" class="attribution-btn" aria-label="Show attribution">?</button>
-      <div id="attribution-popup" class="attribution-popup">
-        "Toyota Levin AE85 Grandfather" (<a href="https://skfb.ly/pEC9o" target="_blank" rel="noopener noreferrer">https://skfb.ly/pEC9o</a>) by GagoSahi is licensed under Creative Commons Attribution (<a href="http://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">http://creativecommons.org/licenses/by/4.0/</a>).<br><br>
-        Three.js grass inspiration by <a href="https://github.com/thebenezer" target="_blank" rel="noopener noreferrer">thebenezer</a>.<br><br>
-        Background music: reidenshi // november 8.
+    <div class="bottom-left-controls">
+      <div class="attribution-container">
+        <button id="attribution-btn" class="attribution-btn" aria-label="Show attribution">?</button>
+        <div id="attribution-popup" class="attribution-popup">
+          "Toyota Levin AE85 Grandfather" (<a href="https://skfb.ly/pEC9o" target="_blank" rel="noopener noreferrer">https://skfb.ly/pEC9o</a>) by GagoSahi is licensed under Creative Commons Attribution (<a href="http://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">http://creativecommons.org/licenses/by/4.0/</a>).<br><br>
+          Three.js grass inspiration by <a href="https://github.com/thebenezer" target="_blank" rel="noopener noreferrer">thebenezer</a>.<br><br>
+          Background music: reidenshi // november 8.
+        </div>
+      </div>
+
+      <div class="volume-container">
+        <button id="volume-btn" class="attribution-btn" aria-label="Adjust volume" aria-expanded="false">
+          <svg id="volume-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="white" aria-hidden="true">
+            <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/>
+          </svg>
+        </button>
+        <div id="volume-popup" class="volume-popup" role="dialog" aria-label="Volume control">
+          <span class="volume-popup__label">Volume</span>
+          <input id="volume-slider" class="volume-slider" type="range" min="0" max="1" step="0.01" value="0.6" aria-label="Music volume">
+        </div>
+      </div>
+
+      <div class="settings-container">
+        <button id="settings-btn" class="attribution-btn" aria-label="Toggle quality settings" aria-expanded="false">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="white" aria-hidden="true">
+            <path d="M19.14 12.94c.04-.3.06-.61.06-.94s-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96a7.01 7.01 0 0 0-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 0 0-.59.22L2.74 8.87a.48.48 0 0 0 .12.61l2.03 1.58c-.05.3-.07.62-.07.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.37 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.57 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.48.48 0 0 0-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/>
+          </svg>
+        </button>
       </div>
     </div>
     <audio id="bgm" src="bgm.mp3" loop preload="auto"></audio>
