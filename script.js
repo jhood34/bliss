@@ -280,7 +280,6 @@ const CAR_PERFORMANCE_MULTIPLIER = 1.5;
 const carMaxSpeed = 65 * CAR_PERFORMANCE_MULTIPLIER;
 const carAcceleration = 42 * CAR_PERFORMANCE_MULTIPLIER;
 let brakeLightMaterials = [];
-let brakeLightLenses = [];
 const carBrake = 40;
 const carFriction = 0.98;
 let carSteering = 0;
@@ -600,6 +599,8 @@ function addWheelMotionMarkers(wheelGroup, sideSign = 1) {
 
 const CAR_WHEEL_SPIN_MATERIALS = new Set(["advan_neova1", "default_grey__s1", "default_grey__e"]);
 const CAR_WHEEL_STEER_MATERIALS = new Set(["brake__spec_2", "Matte__FF191919"]);
+const REAR_BRAKE_LIGHT_MATERIALS = new Set(["zenki__env_9_sp", "Color_K02"]);
+const REAR_LAMP_CENTER_MATERIALS = new Set(["Color_B03"]);
 const CAR_WHEEL_RAW_CENTERS = [
   new THREE.Vector3(CAR_RAW_RIGHT_X, CAR_RAW_WHEEL_Y, CAR_RAW_REAR_Z),
   new THREE.Vector3(CAR_RAW_LEFT_X, CAR_RAW_WHEEL_Y, CAR_RAW_REAR_Z),
@@ -671,10 +672,11 @@ function splitCombinedWheelMesh(sourceMesh) {
 
 function attachCarModel(carModel) {
   brakeLightMaterials = [];
-  brakeLightLenses = [];
   carModel.updateMatrixWorld(true);
   const wheelSourceMeshes = [];
   const edgeOverlayMeshes = [];
+  const rearLampCenterMeshes = [];
+  let rearBrakeLensMaterial = null;
   carModel.traverse((child) => {
     if (!child.isMesh) return;
     child.castShadow = true;
@@ -684,9 +686,16 @@ function attachCarModel(carModel) {
       edgeOverlayMeshes.push(child);
       return;
     }
-    if (materialName === "vehiclelights1") {
+    if (REAR_BRAKE_LIGHT_MATERIALS.has(materialName) || REAR_LAMP_CENTER_MATERIALS.has(materialName)) {
       const materials = Array.isArray(child.material) ? child.material : [child.material];
-      materials.forEach((material) => brakeLightMaterials.push(material));
+      materials.forEach((material) => {
+        material.userData.isRearLampCenter = REAR_LAMP_CENTER_MATERIALS.has(materialName);
+        brakeLightMaterials.push(material);
+      });
+      if (REAR_BRAKE_LIGHT_MATERIALS.has(materialName) && !rearBrakeLensMaterial && !Array.isArray(child.material)) {
+        rearBrakeLensMaterial = child.material;
+      }
+      if (REAR_LAMP_CENTER_MATERIALS.has(materialName)) rearLampCenterMeshes.push(child);
     }
     if (CAR_WHEEL_SPIN_MATERIALS.has(materialName) || CAR_WHEEL_STEER_MATERIALS.has(materialName)) {
       wheelSourceMeshes.push(child);
@@ -701,6 +710,27 @@ function attachCarModel(carModel) {
     materials.forEach((material) => { if (material) edgeMaterials.add(material); });
   });
   edgeMaterials.forEach((material) => material.dispose());
+
+  // Blender inspection confirms Color_B03 is the standalone grey reflector
+  // sitting inside the rear lamp assembly. Give that geometry the surrounding
+  // red lens material so the brake light is one uninterrupted red strip.
+  if (rearBrakeLensMaterial) {
+    rearLampCenterMeshes.forEach((mesh) => {
+      const redLensMaterial = rearBrakeLensMaterial.clone();
+      redLensMaterial.name = "rear_brake_lens_center";
+      // Do not carry the source texture across: Color_B03 uses different UVs,
+      // so the surrounding lens texture lands on its grey reflector pixels.
+      redLensMaterial.map = null;
+      redLensMaterial.alphaMap = null;
+      redLensMaterial.vertexColors = false;
+      redLensMaterial.color.setHex(0x5c0000);
+      redLensMaterial.emissive.setHex(0x120000);
+      redLensMaterial.emissiveIntensity = 0.2;
+      redLensMaterial.userData.isRearLampCenter = false;
+      mesh.material = redLensMaterial;
+      brakeLightMaterials.push(redLensMaterial);
+    });
+  }
 
   const wheelParts = CAR_WHEEL_RAW_CENTERS.map(() => ({ spin: [], steer: [] }));
   wheelSourceMeshes.forEach((sourceMesh) => {
@@ -3523,24 +3553,39 @@ function updateTrailStampUniforms() {
 }
 
 function updateBrakeLights(isBraking) {
-  brakeLightLenses.forEach((material) => {
-    // Keep a dim red tail lamp at rest, then lift it well above the scene's
-    // exposure while braking. MeshBasicMaterial keeps the result independent
-    // of the car paint and surrounding grass lighting.
-    material.color.setHex(isBraking ? 0xff1a00 : 0x5c0000);
-  });
-
   brakeLightMaterials.forEach((m) => {
     if (!m.userData.baseEmissive) {
       m.userData.baseEmissive = m.emissive.clone();
       m.userData.baseColor = m.color.clone();
+      m.userData.baseEmissiveIntensity = m.emissiveIntensity;
+      m.userData.baseToneMapped = m.toneMapped;
     }
     if (isBraking) {
+      // Bypass the scene's filmic tone mapping here: otherwise a bright red
+      // emitter rolls toward amber as its exposure increases.
+      if (m.toneMapped) {
+        m.toneMapped = false;
+        m.needsUpdate = true;
+      }
       m.emissive.setHex(0xff0000);
+      m.emissiveIntensity = 1.85;
       m.color.setHex(0xff0000);
     } else {
-      m.emissive.copy(m.userData.baseEmissive);
-      m.color.copy(m.userData.baseColor);
+      if (m.toneMapped !== m.userData.baseToneMapped) {
+        m.toneMapped = m.userData.baseToneMapped;
+        m.needsUpdate = true;
+      }
+      if (m.userData.isRearLampCenter) {
+        // The grey centre insert is a reflector in the source model. Keep its
+        // proper topology, but give it the same unlit red lens treatment.
+        m.emissive.setHex(0x120000);
+        m.emissiveIntensity = 0.16;
+        m.color.setHex(0x520000);
+      } else {
+        m.emissive.copy(m.userData.baseEmissive);
+        m.emissiveIntensity = m.userData.baseEmissiveIntensity;
+        m.color.copy(m.userData.baseColor);
+      }
     }
   });
 }
