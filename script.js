@@ -46,6 +46,8 @@ const tuningControls = {
   windStrength: document.querySelector("#wind-strength-control"),
   showFps: document.querySelector("#show-fps-control"),
   experimentalMotionBlur: document.querySelector("#experimental-motion-blur-control"),
+  experimentalMotionBlurStrength: document.querySelector("#experimental-motion-blur-strength-control"),
+  experimentalMotionBlurStrengthOutput: document.querySelector("#experimental-motion-blur-strength-output"),
   cloudTextPosX: document.querySelector("#cloud-text-x-control"),
   cloudTextPosY: document.querySelector("#cloud-text-y-control"),
   cloudTextPosZ: document.querySelector("#cloud-text-z-control"),
@@ -68,6 +70,7 @@ const sceneSettings = {
   fogDensity: 0.0072,
   windStrength: 1,
   experimentalMotionBlur: false,
+  experimentalMotionBlurStrength: 1,
   qualityLevel: 3,
   cloudTextPosX: 154,
   cloudTextPosY: 117,
@@ -752,6 +755,7 @@ function initializeTuningPanel() {
     tuningControls.fogColor,
     tuningControls.fogDensity,
     tuningControls.windStrength,
+    tuningControls.experimentalMotionBlurStrength,
     tuningControls.cloudTextPosX,
     tuningControls.cloudTextPosY,
     tuningControls.cloudTextPosZ,
@@ -889,6 +893,8 @@ function syncControlsFromSettings() {
   if (tuningControls.fogDensity) tuningControls.fogDensity.value = sceneSettings.fogDensity;
   if (tuningControls.windStrength) tuningControls.windStrength.value = sceneSettings.windStrength;
   if (tuningControls.experimentalMotionBlur) tuningControls.experimentalMotionBlur.checked = sceneSettings.experimentalMotionBlur;
+  if (tuningControls.experimentalMotionBlurStrength) tuningControls.experimentalMotionBlurStrength.value = sceneSettings.experimentalMotionBlurStrength;
+  updateMotionBlurStrengthOutput();
   if (tuningControls.cloudTextPosX) tuningControls.cloudTextPosX.value = sceneSettings.cloudTextPosX;
   if (tuningControls.cloudTextPosY) tuningControls.cloudTextPosY.value = sceneSettings.cloudTextPosY;
   if (tuningControls.cloudTextPosZ) tuningControls.cloudTextPosZ.value = sceneSettings.cloudTextPosZ;
@@ -910,6 +916,12 @@ function updateSettingsFromControls() {
   if (tuningControls.experimentalMotionBlur) {
     sceneSettings.experimentalMotionBlur = tuningControls.experimentalMotionBlur.checked;
   }
+  sceneSettings.experimentalMotionBlurStrength = THREE.MathUtils.clamp(
+    readNumberControl(tuningControls.experimentalMotionBlurStrength, sceneSettings.experimentalMotionBlurStrength),
+    0.25,
+    3
+  );
+  updateMotionBlurStrengthOutput();
 
   applySceneSettings();
 }
@@ -926,6 +938,12 @@ function readNumberControl(control, fallback) {
 
 function readColorControl(control, fallback) {
   return control && control.value ? control.value : fallback;
+}
+
+function updateMotionBlurStrengthOutput() {
+  if (tuningControls.experimentalMotionBlurStrengthOutput) {
+    tuningControls.experimentalMotionBlurStrengthOutput.value = `${sceneSettings.experimentalMotionBlurStrength.toFixed(2)}×`;
+  }
 }
 
 function applySceneSettings() {
@@ -3095,10 +3113,15 @@ function animateGrass(time, delta) {
 function updateGrassMotionBlur(delta) {
   const planarSpeed = Math.hypot(player.velocity.x, player.velocity.z);
   const isEnabled = sceneSettings.experimentalMotionBlur;
-  // The low end stays still; at top speed the extra grass-card width remains
-  // below 0.7m, keeping the effect deliberately subtle.
+  // A quick rise makes the effect legible during an ordinary drive instead of
+  // only at the car's absolute top speed. The user-facing multiplier still
+  // provides a conservative 0.25x setting and a deliberately obvious 3x cap.
+  const speedResponse = Math.pow(
+    THREE.MathUtils.clamp(planarSpeed / (carMaxSpeed * 0.48), 0, 1),
+    0.74
+  );
   const targetStrength = isEnabled
-    ? THREE.MathUtils.smoothstep(planarSpeed, 7, carMaxSpeed * 0.78) * 0.64
+    ? speedResponse * 1.35 * sceneSettings.experimentalMotionBlurStrength
     : 0;
   const response = 1 - Math.exp(-(targetStrength > grassMotionBlur.strength ? 12 : 7) * delta);
   grassMotionBlur.strength += (targetStrength - grassMotionBlur.strength) * response;
@@ -3111,7 +3134,8 @@ function updateGrassMotionBlur(delta) {
   window.blissMotionBlur = {
     enabled: isEnabled,
     speed: planarSpeed,
-    strength: grassMotionBlur.strength
+    strength: grassMotionBlur.strength,
+    multiplier: sceneSettings.experimentalMotionBlurStrength
   };
 }
 
