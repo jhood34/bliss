@@ -108,9 +108,10 @@ const trailStampPositionRightUniforms = Array.from({ length: MAX_SHADER_TRAIL_ST
 const trailStampForwardFadeUniforms = Array.from({ length: MAX_SHADER_TRAIL_STAMPS }, () => new THREE.Vector4(0, 1, 0, 0));
 const carRight2D = new THREE.Vector2(1, 0);
 const carForward2D = new THREE.Vector2(0, 1);
-const grassMotionBlur = {
-  direction: new THREE.Vector2(0, -1),
-  strength: 0
+const motionBlurState = {
+  historyIndex: 0,
+  historyValid: false,
+  historyWeight: 0
 };
 
 const renderer = new THREE.WebGLRenderer({
@@ -131,6 +132,47 @@ const renderQuality = {
 };
 renderer.setPixelRatio(renderQuality.scale);
 renderer.setSize(window.innerWidth, window.innerHeight, false);
+
+const motionBlurCurrentTarget = new THREE.WebGLRenderTarget(1, 1, {
+  minFilter: THREE.LinearFilter,
+  magFilter: THREE.LinearFilter,
+  depthBuffer: true
+});
+const motionBlurHistoryTargets = [
+  new THREE.WebGLRenderTarget(1, 1, { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: false }),
+  new THREE.WebGLRenderTarget(1, 1, { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: false })
+];
+const motionBlurPostScene = new THREE.Scene();
+const motionBlurPostCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+const motionBlurCompositeMaterial = new THREE.ShaderMaterial({
+  depthWrite: false,
+  depthTest: false,
+  uniforms: {
+    uCurrentFrame: { value: motionBlurCurrentTarget.texture },
+    uHistoryFrame: { value: motionBlurHistoryTargets[0].texture },
+    uHistoryWeight: { value: 0 }
+  },
+  vertexShader: `
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = vec4(position.xy, 0.0, 1.0);
+    }
+  `,
+  fragmentShader: `
+    uniform sampler2D uCurrentFrame;
+    uniform sampler2D uHistoryFrame;
+    uniform float uHistoryWeight;
+    varying vec2 vUv;
+    void main() {
+      vec4 currentFrame = texture2D(uCurrentFrame, vUv);
+      vec4 historyFrame = texture2D(uHistoryFrame, vUv);
+      gl_FragColor = mix(currentFrame, historyFrame, uHistoryWeight);
+    }
+  `
+});
+motionBlurPostScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), motionBlurCompositeMaterial));
+resizeMotionBlurTargets();
 
 const textureLoader = new THREE.TextureLoader();
 const grassAlphaTexture = textureLoader.load("assets/fluffy-grass-alpha.jpeg");
@@ -839,6 +881,7 @@ function applyQualityLevel(level) {
 
   renderer.setPixelRatio(renderQuality.scale);
   renderer.setSize(window.innerWidth, window.innerHeight, false);
+  resizeMotionBlurTargets();
   cloudMaterials.forEach((material) => {
     material.uniforms.uRaymarchSteps.value = preset.cloudSteps;
   });
@@ -924,6 +967,7 @@ function updateSettingsFromControls() {
   updateMotionBlurStrengthOutput();
 
   applySceneSettings();
+  invalidateMotionBlurHistory();
 }
 
 function readNumberControl(control, fallback) {
@@ -964,7 +1008,6 @@ function applySceneSettings() {
     material.uniforms.uTipColor2.value.set(sceneSettings.grassTipColorB);
     material.uniforms.uFogColor.value.set(sceneSettings.fogColor);
     material.uniforms.uFogDensity.value = sceneSettings.fogDensity;
-    material.uniforms.uMotionBlurEnabled.value = sceneSettings.experimentalMotionBlur ? 1 : 0;
   });
 
   if (distantGrassMaterial) {
@@ -2220,9 +2263,6 @@ function createFluffyGrassMaterial(layer) {
       uTipColor2: { value: new THREE.Color(sceneSettings.grassTipColorB) },
       uFogColor: { value: scene.fog.color },
       uFogDensity: { value: scene.fog.density },
-      uMotionBlurEnabled: { value: sceneSettings.experimentalMotionBlur ? 1 : 0 },
-      uMotionBlurDirection: { value: grassMotionBlur.direction.clone() },
-      uMotionBlurStrength: { value: 0 },
       uShadowParams1: { value: new THREE.Vector4(0.0, -0.2, 1.6, 3.2) },
       uShadowParams2: { value: new THREE.Vector3(-0.3, 1.2, 0.25) }
     },
@@ -2244,9 +2284,6 @@ function createFluffyGrassMaterial(layer) {
       uniform vec4 uTrailStampPositionRight[12];
       uniform vec4 uTrailStampForwardFade[12];
       uniform int uTrailStampCount;
-      uniform float uMotionBlurEnabled;
-      uniform vec2 uMotionBlurDirection;
-      uniform float uMotionBlurStrength;
       uniform vec4 uShadowParams1;
       uniform vec3 uShadowParams2;
 
@@ -2387,13 +2424,6 @@ function createFluffyGrassMaterial(layer) {
         modelPosition.x += sinWave;
         modelPosition.z += sinWave;
 
-        // The chase camera moves with the car, so the grass streaks backwards
-        // relative to travel. This shader is assigned only to grass, leaving
-        // the car's silhouette clean even at full speed.
-        float motionBlurMask = mix(0.2, 1.0, smoothstep(0.0, 0.32, heightFactor));
-        float motionBlurSpread = (uv.x - 0.5) * 2.0 * motionBlurMask * uMotionBlurStrength * uMotionBlurEnabled;
-        modelPosition.xz += uMotionBlurDirection * motionBlurSpread;
-
         // Height variation from noise (FluffyGrass approach)
         modelPosition.y += exp(texture2D(uNoiseTexture, globalUv * uNoiseScale).r) * 0.5 * heightFactor * uGrassHeightMultiplier;
 
@@ -2481,6 +2511,14 @@ function resizeScene() {
   camera.updateProjectionMatrix();
   renderer.setPixelRatio(renderQuality.scale);
   renderer.setSize(width, height, false);
+  resizeMotionBlurTargets();
+}
+
+function resizeMotionBlurTargets() {
+  const drawingBufferSize = renderer.getDrawingBufferSize(new THREE.Vector2());
+  motionBlurCurrentTarget.setSize(drawingBufferSize.x, drawingBufferSize.y);
+  motionBlurHistoryTargets.forEach((target) => target.setSize(drawingBufferSize.x, drawingBufferSize.y));
+  invalidateMotionBlurHistory();
 }
 
 function updateDynamicResolution(frameTime) {
@@ -2512,6 +2550,7 @@ function updateDynamicResolution(frameTime) {
   renderQuality.scale = nextScale;
   renderer.setPixelRatio(renderQuality.scale);
   renderer.setSize(window.innerWidth, window.innerHeight, false);
+  resizeMotionBlurTargets();
   window.blissPerformance = { renderScale: renderQuality.scale, averageFrameTime };
 }
 
@@ -3064,9 +3103,8 @@ function animateClouds(delta) {
   }
 }
 
-function animateGrass(time, delta) {
+function animateGrass(time) {
   updateCarDisplacementBasis();
-  updateGrassMotionBlur(delta);
 
   const grassFlatteningEnabled = sceneSettings.qualityLevel >= 4;
 
@@ -3104,39 +3142,65 @@ function animateGrass(time, delta) {
     material.uniforms.uCarForward.value.copy(carForward2D);
     material.uniforms.uGrassFlatteningEnabled.value = grassFlatteningEnabled ? 1 : 0;
     material.uniforms.uTrailStampCount.value = grassFlatteningEnabled ? trailStamps.length : 0;
-    material.uniforms.uMotionBlurEnabled.value = sceneSettings.experimentalMotionBlur ? 1 : 0;
-    material.uniforms.uMotionBlurDirection.value.copy(grassMotionBlur.direction);
-    material.uniforms.uMotionBlurStrength.value = grassMotionBlur.strength;
   });
 }
 
-function updateGrassMotionBlur(delta) {
+function updateMotionBlur(delta) {
   const planarSpeed = Math.hypot(player.velocity.x, player.velocity.z);
   const isEnabled = sceneSettings.experimentalMotionBlur;
-  // A quick rise makes the effect legible during an ordinary drive instead of
-  // only at the car's absolute top speed. The user-facing multiplier still
-  // provides a conservative 0.25x setting and a deliberately obvious 3x cap.
+  // This controls shutter persistence, not any object's geometry. As the
+  // chase camera follows the car, its pixels remain largely aligned between
+  // frames while the world trails naturally behind it.
   const speedResponse = Math.pow(
     THREE.MathUtils.clamp(planarSpeed / (carMaxSpeed * 0.48), 0, 1),
     0.74
   );
-  const targetStrength = isEnabled
-    ? speedResponse * 1.35 * sceneSettings.experimentalMotionBlurStrength
+  const targetWeight = isEnabled
+    ? speedResponse * THREE.MathUtils.clamp(0.16 + sceneSettings.experimentalMotionBlurStrength * 0.4, 0.2, 0.82)
     : 0;
-  const response = 1 - Math.exp(-(targetStrength > grassMotionBlur.strength ? 12 : 7) * delta);
-  grassMotionBlur.strength += (targetStrength - grassMotionBlur.strength) * response;
-
-  if (planarSpeed > 0.15) {
-    // Static ground flows backward in the chase camera.
-    grassMotionBlur.direction.set(-player.velocity.x, -player.velocity.z).normalize();
-  }
+  // Keep exposure duration consistent when dynamic resolution changes the
+  // frame rate. Two 30fps frames therefore carry roughly the same history as
+  // one 60fps frame at the same shutter setting.
+  motionBlurState.historyWeight = targetWeight > 0
+    ? Math.pow(targetWeight, Math.max(delta, 1 / 240) * 60)
+    : 0;
 
   window.blissMotionBlur = {
     enabled: isEnabled,
     speed: planarSpeed,
-    strength: grassMotionBlur.strength,
+    historyWeight: motionBlurState.historyWeight,
     multiplier: sceneSettings.experimentalMotionBlurStrength
   };
+}
+
+function renderMotionBlurredScene() {
+  const readHistory = motionBlurHistoryTargets[motionBlurState.historyIndex];
+  const writeHistory = motionBlurHistoryTargets[1 - motionBlurState.historyIndex];
+
+  renderer.setRenderTarget(motionBlurCurrentTarget);
+  renderer.render(scene, camera);
+
+  motionBlurCompositeMaterial.uniforms.uCurrentFrame.value = motionBlurCurrentTarget.texture;
+  motionBlurCompositeMaterial.uniforms.uHistoryFrame.value = readHistory.texture;
+  motionBlurCompositeMaterial.uniforms.uHistoryWeight.value = motionBlurState.historyValid
+    ? motionBlurState.historyWeight
+    : 0;
+  renderer.setRenderTarget(writeHistory);
+  renderer.render(motionBlurPostScene, motionBlurPostCamera);
+
+  motionBlurCompositeMaterial.uniforms.uCurrentFrame.value = writeHistory.texture;
+  motionBlurCompositeMaterial.uniforms.uHistoryFrame.value = writeHistory.texture;
+  motionBlurCompositeMaterial.uniforms.uHistoryWeight.value = 0;
+  renderer.setRenderTarget(null);
+  renderer.render(motionBlurPostScene, motionBlurPostCamera);
+
+  motionBlurState.historyIndex = 1 - motionBlurState.historyIndex;
+  motionBlurState.historyValid = true;
+}
+
+function invalidateMotionBlurHistory() {
+  motionBlurState.historyValid = false;
+  motionBlurState.historyWeight = 0;
 }
 
 function updateCarDisplacementBasis() {
@@ -3270,10 +3334,16 @@ function animate() {
   updateDistantGrass();
   updateGrassLayerVisibility();
   animateClouds(delta);
-  animateGrass(clock.elapsedTime, delta);
+  animateGrass(clock.elapsedTime);
   animateCarFade();
   updateJoystickUI();
-  renderer.render(scene, camera);
+  updateMotionBlur(delta);
+  if (sceneSettings.experimentalMotionBlur) {
+    renderMotionBlurredScene();
+  } else {
+    invalidateMotionBlurHistory();
+    renderer.render(scene, camera);
+  }
 }
 
 function updateFpsMeter(delta) {

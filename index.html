@@ -79,14 +79,14 @@
       </label>
 
       <label>
-        <span>Experimental grass blur</span>
+        <span>Experimental motion blur</span>
         <input id="experimental-motion-blur-control" type="checkbox" aria-describedby="experimental-motion-blur-hint">
       </label>
-      <span id="experimental-motion-blur-hint" class="tuning-panel__hint">Speed-responsive · grass only</span>
+      <span id="experimental-motion-blur-hint" class="tuning-panel__hint">Camera-relative · whole scene</span>
       <label>
         <span>Blur strength</span>
         <span class="tuning-panel__range-with-output">
-          <input id="experimental-motion-blur-strength-control" type="range" min="0.25" max="3" step="0.05" value="1" aria-label="Experimental grass blur strength">
+          <input id="experimental-motion-blur-strength-control" type="range" min="0.25" max="3" step="0.05" value="1" aria-label="Experimental motion blur strength">
           <output id="experimental-motion-blur-strength-output" for="experimental-motion-blur-strength-control">1.00×</output>
         </span>
       </label>
@@ -221,7 +221,7 @@
       }
     }
   </script>
-  <script type="module" src="script.js?v=3d-scene-91"></script>
+  <script type="module" src="script.js?v=3d-scene-92"></script>
     <div id="mobile-controls" class="mobile-controls" aria-hidden="true">
       <div id="mobile-joystick-zone" class="mobile-joystick-zone">
         <div id="mobile-joystick-base" class="mobile-joystick-base">
