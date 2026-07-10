@@ -169,8 +169,9 @@ let loadedCarQualityLevel = 0;
 let pendingCarQualityLevel = 0;
 let carModelRequestId = 0;
 let carSpeed = 0;
-const carMaxSpeed = 45;
-const carAcceleration = 20;
+const carMaxSpeed = 65;
+const carAcceleration = 35;
+let brakeLightMaterials = [];
 const carBrake = 40;
 const carFriction = 0.98;
 let carSteering = 0;
@@ -238,11 +239,7 @@ const touch = {
   lookId: null,
   moveStart: new THREE.Vector2(),
   lookLast: new THREE.Vector2(),
-  moveVector: new THREE.Vector2(),
-  isPinching: false,
-  pinchStartDist: 0,
-  pinchStartZoom: 0,
-  pinchStartFov: 0
+  moveVector: new THREE.Vector2()
 };
 const fpsStats = {
   frames: 0,
@@ -566,6 +563,7 @@ function splitCombinedWheelMesh(sourceMesh) {
 }
 
 function attachCarModel(carModel) {
+  brakeLightMaterials = [];
   carModel.updateMatrixWorld(true);
   const wheelSourceMeshes = [];
   const edgeOverlayMeshes = [];
@@ -577,6 +575,10 @@ function attachCarModel(carModel) {
     if (materialName.startsWith("edge_color")) {
       edgeOverlayMeshes.push(child);
       return;
+    }
+    if (materialName.includes("vehiclelights") || materialName.includes("lights")) {
+      const materials = Array.isArray(child.material) ? child.material : [child.material];
+      materials.forEach((m) => brakeLightMaterials.push(m));
     }
     if (CAR_WHEEL_SPIN_MATERIALS.has(materialName) || CAR_WHEEL_STEER_MATERIALS.has(materialName)) {
       wheelSourceMeshes.push(child);
@@ -2630,27 +2632,7 @@ function handleTouchStart(event) {
   event.preventDefault();
   document.body.classList.add("scene-started");
 
-  if (event.touches.length === 2) {
-    const dx = event.touches[0].clientX - event.touches[1].clientX;
-    const dy = event.touches[0].clientY - event.touches[1].clientY;
-    const dist = Math.hypot(dx, dy);
-    
-    if (dist < window.innerWidth * 0.6) {
-      touch.isPinching = true;
-      touch.pinchStartDist = dist;
-      touch.pinchStartZoom = cameraZoom.targetDistance;
-      touch.pinchStartFov = cameraZoom.targetFov;
-      
-      touch.moveId = null;
-      touch.lookId = null;
-      touch.moveVector.set(0, 0);
-      return;
-    }
-  }
-
   for (const changedTouch of event.changedTouches) {
-    if (touch.isPinching) return;
-
     const point = new THREE.Vector2(changedTouch.clientX, changedTouch.clientY);
 
     if (point.x < window.innerWidth * 0.48 && touch.moveId === null) {
@@ -2666,27 +2648,6 @@ function handleTouchStart(event) {
 
 function handleTouchMove(event) {
   event.preventDefault();
-
-  if (touch.isPinching && event.touches.length >= 2) {
-    const dx = event.touches[0].clientX - event.touches[1].clientX;
-    const dy = event.touches[0].clientY - event.touches[1].clientY;
-    const dist = Math.hypot(dx, dy);
-    
-    if (dist > 0) {
-      const zoomFactor = touch.pinchStartDist / dist;
-      cameraZoom.targetDistance = THREE.MathUtils.clamp(
-        touch.pinchStartZoom * zoomFactor,
-        8,
-        26
-      );
-      cameraZoom.targetFov = THREE.MathUtils.clamp(
-        touch.pinchStartFov * zoomFactor,
-        32,
-        72
-      );
-    }
-    return;
-  }
 
   for (const changedTouch of event.changedTouches) {
     const point = new THREE.Vector2(changedTouch.clientX, changedTouch.clientY);
@@ -2710,10 +2671,6 @@ function handleTouchMove(event) {
 
 function handleTouchEnd(event) {
   event.preventDefault();
-
-  if (event.touches.length < 2) {
-    touch.isPinching = false;
-  }
 
   for (const changedTouch of event.changedTouches) {
     if (changedTouch.identifier === touch.moveId) {
@@ -2766,13 +2723,15 @@ function updatePhysics(delta) {
 function readVehicleInput() {
   let forwardInput = -touch.moveVector.y;
   let sideInput = -touch.moveVector.x;
+  let handbrake = false;
 
   if (keys.has("KeyW") || keys.has("ArrowUp")) forwardInput += 1;
   if (keys.has("KeyS") || keys.has("ArrowDown")) forwardInput -= 1;
   if (keys.has("KeyA") || keys.has("ArrowLeft")) sideInput += 1;
   if (keys.has("KeyD") || keys.has("ArrowRight")) sideInput -= 1;
+  if (keys.has("Space") || keys.has(" ")) handbrake = true;
 
-  return { forwardInput, sideInput };
+  return { forwardInput, sideInput, handbrake };
 }
 
 function stepVehiclePhysics(vehicleInput, fixedDelta) {
@@ -2782,12 +2741,16 @@ function stepVehiclePhysics(vehicleInput, fixedDelta) {
     }
 
     physicsThrottle += (vehicleInput.forwardInput - physicsThrottle) * Math.min(1, fixedDelta * 7.0);
-    const engineForce = physicsThrottle * -2800.0;
+    const engineForce = physicsThrottle * -4500.0;
 
-    // Only apply idle braking when truly coasting (no input and near-zero throttle)
     const isCoasting = vehicleInput.forwardInput === 0 && Math.abs(physicsThrottle) < 0.05;
-    const brakeForce = isCoasting ? 16.0 : 0.0;
+    let brakeForce = isCoasting ? 16.0 : 0.0;
+    if (vehicleInput.handbrake) {
+      brakeForce = 200.0;
+    }
     const steering = vehicleInput.sideInput * 0.4;
+    
+    updateBrakeLights(vehicleInput.handbrake || vehicleInput.forwardInput < -0.1);
 
     for (let i = 0; i < 4; i += 1) {
       vehicleController.setWheelEngineForce(i, engineForce);
@@ -2879,6 +2842,7 @@ function updateFallbackCar(delta) {
 
   let forwardInput = -touch.moveVector.y;
   let sideInput = -touch.moveVector.x;
+  let handbrake = keys.has("Space") || keys.has(" ");
 
   if (keys.has("KeyW") || keys.has("ArrowUp")) forwardInput += 1;
   if (keys.has("KeyS") || keys.has("ArrowDown")) forwardInput -= 1;
@@ -2886,9 +2850,17 @@ function updateFallbackCar(delta) {
   if (keys.has("KeyD") || keys.has("ArrowRight")) sideInput -= 1;
 
   carSpeed += forwardInput * carAcceleration * delta;
-  carSpeed *= Math.pow(carFriction, delta * 60);
+  
+  if (handbrake) {
+    carSpeed *= Math.pow(0.1, delta * 60);
+  } else {
+    carSpeed *= Math.pow(carFriction, delta * 60);
+  }
+  
   carSpeed = THREE.MathUtils.clamp(carSpeed, -carMaxSpeed * 0.42, carMaxSpeed);
   carSteering += (sideInput * carMaxSteering - carSteering) * Math.min(1, delta * 8);
+
+  updateBrakeLights(handbrake || forwardInput < -0.1);
 
   if (Math.abs(carSpeed) > 0.05) {
     player.yaw += carSteering * carSpeed * delta;
@@ -3099,6 +3071,22 @@ function updateTrailStampUniforms() {
     trailStampPositionRightUniforms[i].set(stamp.x, stamp.z, stamp.rightX, stamp.rightZ);
     trailStampForwardFadeUniforms[i].set(stamp.forwardX, stamp.forwardZ, fade, 0);
   }
+}
+
+function updateBrakeLights(isBraking) {
+  brakeLightMaterials.forEach((m) => {
+    if (!m.userData.baseEmissive) {
+      m.userData.baseEmissive = m.emissive.clone();
+      m.userData.baseColor = m.color.clone();
+    }
+    if (isBraking) {
+      m.emissive.setHex(0xff0000);
+      m.color.setHex(0xff0000);
+    } else {
+      m.emissive.copy(m.userData.baseEmissive);
+      m.color.copy(m.userData.baseColor);
+    }
+  });
 }
 
 function updateJoystickUI() {
