@@ -3051,6 +3051,42 @@ function updateTrailStampUniforms() {
   }
 }
 
+function animateCarFade() {
+  if (!carVisualRoot) return;
+  const progress = (window.sceneStartedTime !== undefined) ? Math.min(1.0, (clock.elapsedTime - window.sceneStartedTime) / 3.0) : 0.0;
+  
+  carVisualRoot.visible = (progress > 0.0);
+
+  if (carVisualRoot.userData.lastFadeProgress === progress) return;
+  carVisualRoot.userData.lastFadeProgress = progress;
+
+  carVisualRoot.traverse((child) => {
+    if (child.isMesh && child.material) {
+      const materials = Array.isArray(child.material) ? child.material : [child.material];
+      materials.forEach((mat) => {
+        if (mat.userData.originalOpacity === undefined) {
+          mat.userData.originalTransparent = mat.transparent;
+          mat.userData.originalOpacity = mat.opacity;
+        }
+
+        if (progress < 1.0) {
+          if (!mat.transparent) {
+            mat.transparent = true;
+            mat.needsUpdate = true;
+          }
+          mat.opacity = mat.userData.originalOpacity * progress;
+        } else {
+          if (mat.transparent !== mat.userData.originalTransparent) {
+            mat.transparent = mat.userData.originalTransparent;
+            mat.needsUpdate = true;
+          }
+          mat.opacity = mat.userData.originalOpacity;
+        }
+      });
+    }
+  });
+}
+
 function animate() {
   requestAnimationFrame(animate);
 
@@ -3064,6 +3100,7 @@ function animate() {
   updateGrassLayerVisibility();
   animateClouds(delta);
   animateGrass(clock.elapsedTime);
+  animateCarFade();
   renderer.render(scene, camera);
 }
 
