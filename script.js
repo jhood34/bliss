@@ -2910,7 +2910,13 @@ function updateChaseCamera(delta) {
     camera.fov = cameraZoom.fov;
     camera.updateProjectionMatrix();
   }
-  const chaseDistance = cameraZoom.distance;
+  let chaseDistance = cameraZoom.distance;
+  if (cameraFollow.velocity) {
+    const speed = cameraFollow.velocity.length();
+    // Pull the camera back by up to 10 meters at high speeds
+    const speedOffset = Math.min(speed * 0.25, 10.0);
+    chaseDistance += speedOffset;
+  }
 
   if (carGroup) {
     // Project the interpolated vehicle orientation onto the ground plane.
