@@ -1229,21 +1229,28 @@ function createGrassTexture() {
   return texture;
 }
 
-function createCloudTextTexture() {
+function createCloudTextTexture(isMobile) {
   const textureCanvas = document.createElement("canvas");
-  textureCanvas.width = 1024;
-  textureCanvas.height = 256;
+  textureCanvas.width = isMobile ? 512 : 1024;
+  textureCanvas.height = isMobile ? 512 : 256;
   const context = textureCanvas.getContext("2d");
   
   context.fillStyle = "#000000";
   context.fillRect(0, 0, textureCanvas.width, textureCanvas.height);
   
   context.fillStyle = "#ffffff";
-  context.textAlign = "center";
   context.textBaseline = "middle";
-  context.font = "bold 130px sans-serif";
   
-  context.fillText("a blissful drive", textureCanvas.width / 2, textureCanvas.height / 2);
+  if (isMobile) {
+    context.textAlign = "left";
+    context.font = "bold 110px sans-serif";
+    context.fillText("a blissful", 40, textureCanvas.height / 2 - 60);
+    context.fillText("drive", 40, textureCanvas.height / 2 + 60);
+  } else {
+    context.textAlign = "center";
+    context.font = "bold 130px sans-serif";
+    context.fillText("a blissful drive", textureCanvas.width / 2, textureCanvas.height / 2);
+  }
   
   const texture = new THREE.CanvasTexture(textureCanvas);
   texture.minFilter = THREE.LinearFilter;
@@ -1252,6 +1259,8 @@ function createCloudTextTexture() {
 }
 
 function createClouds() {
+  const isMobile = window.matchMedia("(pointer: coarse)").matches;
+
   const volumetricCloudVertexShader = `
     varying vec3 vWorldPosition;
     void main() {
@@ -1260,8 +1269,10 @@ function createClouds() {
       gl_Position = projectionMatrix * viewMatrix * worldPosition;
     }
   `;
-
+  
   const volumetricCloudFragmentShader = `
+    uniform vec2 uTextBounds;
+
     varying vec3 vWorldPosition;
 
     uniform vec3 uCameraPos;
@@ -1338,9 +1349,9 @@ function createClouds() {
         float xDist = dot(localP, uTextRight);
         float yDist = dot(localP, uTextUp);
         
-        if (abs(xDist) < 250.0 && abs(yDist) < 60.0) {
+        if (abs(xDist) < uTextBounds.x * 0.5 && abs(yDist) < uTextBounds.y * 0.5) {
           // Map local X and Y bounds to 0-1 UV space
-          vec2 uv = vec2(xDist / 500.0 + 0.5, yDist / 120.0 + 0.5);
+          vec2 uv = vec2(xDist / uTextBounds.x + 0.5, yDist / uTextBounds.y + 0.5);
           float textMask = texture2D(uCloudText, uv).r;
           
           float spawnMask = smoothstep(uTextProgress - 0.05, uTextProgress + 0.05, uv.x);
@@ -1424,9 +1435,10 @@ function createClouds() {
       uSkyColor: { value: new THREE.Color(sceneSettings.skyColor) },
       uSunColor: { value: new THREE.Color(0xffffff) },
       uRaymarchSteps: { value: QUALITY_PRESETS[sceneSettings.qualityLevel].cloudSteps },
-      uCloudText: { value: createCloudTextTexture() },
+      uCloudText: { value: createCloudTextTexture(isMobile) },
+      uTextBounds: { value: isMobile ? new THREE.Vector2(300.0, 300.0) : new THREE.Vector2(500.0, 120.0) },
       uTextProgress: { value: 0.0 },
-      uTextCenter: { value: new THREE.Vector3(0, 110, -250) },
+      uTextCenter: { value: isMobile ? new THREE.Vector3(0, 110, -400) : new THREE.Vector3(0, 110, -250) },
       uTextRight: { value: new THREE.Vector3(1, 0, 0) },
       uTextUp: { value: new THREE.Vector3(0, 1, 0) },
       uTextForward: { value: new THREE.Vector3(0, 0, 1) }
