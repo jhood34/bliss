@@ -2529,8 +2529,11 @@ function readVehicleInput() {
 function stepVehiclePhysics(vehicleInput, fixedDelta) {
   if (vehicleController && carBody) {
     physicsThrottle += (vehicleInput.forwardInput - physicsThrottle) * Math.min(1, fixedDelta * 7.0);
-    const engineForce = physicsThrottle * -2800.0;
-    const brakeForce = vehicleInput.forwardInput === 0 ? 16.0 : 0.0;
+    const engineForce = physicsThrottle * 2800.0;
+
+    // Only apply idle braking when truly coasting (no input and near-zero throttle)
+    const isCoasting = vehicleInput.forwardInput === 0 && Math.abs(physicsThrottle) < 0.05;
+    const brakeForce = isCoasting ? 16.0 : 0.0;
     const steering = vehicleInput.sideInput * 0.4;
 
     for (let i = 0; i < 4; i += 1) {
