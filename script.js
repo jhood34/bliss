@@ -2952,9 +2952,9 @@ function updateChaseCamera(delta) {
   cameraFollow.lastPos.copy(player.position);
   cameraFollow.velocity.lerp(currentVel, 1 - Math.exp(-4 * delta));
   
-  const lookAhead = cameraFollow.velocity.clone().multiplyScalar(0.5);
-  if (lookAhead.lengthSq() > 400) {
-    lookAhead.setLength(20);
+  const lookAhead = cameraFollow.velocity.clone().multiplyScalar(0.15);
+  if (lookAhead.lengthSq() > 36) {
+    lookAhead.setLength(6);
   }
 
   cameraDesiredTarget.set(carCenter.x + lookAhead.x, carCenter.y + 1.15, carCenter.z + lookAhead.z);
