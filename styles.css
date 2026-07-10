@@ -13,7 +13,7 @@ body {
 body {
   background: #78bff4;
   color: #ffffff;
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: "DM Sans", Arial, Helvetica, sans-serif;
 }
 
 button {
@@ -311,7 +311,7 @@ body.ui-hidden .quality-control {
 }
 
 .xp-welcome-text {
-  font-family: "Segoe UI", "Helvetica Neue", sans-serif;
+  font-family: "DM Sans", sans-serif;
   font-size: clamp(3rem, 6vw, 60px);
   font-weight: 300;
   color: #ffffff;
@@ -378,7 +378,7 @@ body.ui-hidden .quality-control {
 }
 
 .xp-username {
-  font-family: "Segoe UI", "Helvetica Neue", sans-serif;
+  font-family: "DM Sans", sans-serif;
   font-weight: normal;
   font-size: 28px;
   color: white;
@@ -387,7 +387,7 @@ body.ui-hidden .quality-control {
 }
 
 .xp-status {
-  font-family: "Segoe UI", "Helvetica Neue", sans-serif;
+  font-family: "DM Sans", sans-serif;
   font-size: 14px;
   color: #aaddff;
   font-weight: normal;
@@ -837,7 +837,7 @@ body.scene-started .mobile-controls {
 .xp-prompt-text {
   position: absolute;
   bottom: 80px;
-  font-family: "Segoe UI", "Helvetica Neue", sans-serif;
+  font-family: "DM Sans", sans-serif;
   font-size: 16px;
   color: rgba(255, 255, 255, 0.8);
   text-shadow: 0 0 10px rgba(0,0,0,0.5);
