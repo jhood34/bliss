@@ -278,14 +278,31 @@ let loadedCarQualityLevel = 0;
 let pendingCarQualityLevel = 0;
 let carModelRequestId = 0;
 let carSpeed = 0;
-const carMaxSpeed = 65;
-const carAcceleration = 35;
+const CAR_PERFORMANCE_MULTIPLIER = 1.5;
+const carMaxSpeed = 65 * CAR_PERFORMANCE_MULTIPLIER;
+const carAcceleration = 42 * CAR_PERFORMANCE_MULTIPLIER;
 let brakeLightMaterials = [];
+let brakeLightLenses = [];
 const carBrake = 40;
 const carFriction = 0.98;
 let carSteering = 0;
 const carMaxSteering = 0.035;
 let physicsThrottle = 0;
+const TRANSMISSION_GEARS = [
+  null,
+  { topSpeed: 14.5 * CAR_PERFORMANCE_MULTIPLIER, driveMultiplier: 1.18 },
+  { topSpeed: 24.5 * CAR_PERFORMANCE_MULTIPLIER, driveMultiplier: 0.96 },
+  { topSpeed: 35.5 * CAR_PERFORMANCE_MULTIPLIER, driveMultiplier: 0.78 },
+  { topSpeed: 47.5 * CAR_PERFORMANCE_MULTIPLIER, driveMultiplier: 0.64 },
+  { topSpeed: carMaxSpeed, driveMultiplier: 0.52 }
+];
+const transmission = {
+  gear: 1,
+  shiftTimer: 0,
+  shiftJolt: 0,
+  rpm: 900,
+  shifting: false
+};
 
 camera.position.copy(player.position);
 camera.rotation.set(player.pitch, player.yaw, 0);
@@ -337,6 +354,7 @@ const grassStats = {
   visibleTilesByLod: {},
   activeInstancesByLod: {}
 };
+let lastGrassStatsDomPublishTime = 0;
 window.blissGrassStats = grassStats;
 let terrainMaterial = null;
 let terrain = null;
@@ -675,9 +693,11 @@ function splitCombinedWheelMesh(sourceMesh) {
 
 function attachCarModel(carModel) {
   brakeLightMaterials = [];
+  brakeLightLenses = [];
   carModel.updateMatrixWorld(true);
   const wheelSourceMeshes = [];
   const edgeOverlayMeshes = [];
+  const rearLampSourceMeshes = [];
   carModel.traverse((child) => {
     if (!child.isMesh) return;
     child.castShadow = true;
@@ -687,9 +707,8 @@ function attachCarModel(carModel) {
       edgeOverlayMeshes.push(child);
       return;
     }
-    if (materialName.includes("vehiclelights") || materialName.includes("lights")) {
-      const materials = Array.isArray(child.material) ? child.material : [child.material];
-      materials.forEach((m) => brakeLightMaterials.push(m));
+    if (materialName.includes("vehiclelights")) {
+      rearLampSourceMeshes.push(child);
     }
     if (CAR_WHEEL_SPIN_MATERIALS.has(materialName) || CAR_WHEEL_STEER_MATERIALS.has(materialName)) {
       wheelSourceMeshes.push(child);
@@ -704,6 +723,8 @@ function attachCarModel(carModel) {
     materials.forEach((material) => { if (material) edgeMaterials.add(material); });
   });
   edgeMaterials.forEach((material) => material.dispose());
+
+  addRearBrakeLightGeometry(rearLampSourceMeshes);
 
   const wheelParts = CAR_WHEEL_RAW_CENTERS.map(() => ({ spin: [], steer: [] }));
   wheelSourceMeshes.forEach((sourceMesh) => {
@@ -756,6 +777,74 @@ function attachCarModel(carModel) {
     carGroup.remove(previousVisual);
     disposeCarModel(previousVisual);
   }
+}
+
+function addRearBrakeLightGeometry(sourceMeshes) {
+  let extractedTriangles = 0;
+  sourceMeshes.forEach((sourceMesh) => {
+    const geometry = extractRearLampTriangles(sourceMesh);
+    if (!geometry) return;
+
+    extractedTriangles += geometry.attributes.position.count / 3;
+    const material = new THREE.MeshBasicMaterial({
+      color: 0x5c0000,
+      toneMapped: false,
+      side: THREE.DoubleSide,
+      // The imported trim has a coincident opaque layer. Rendering this exact
+      // lamp topology after that layer resolves the bad export without adding
+      // any invented geometry in front of the car.
+      depthTest: false,
+      depthWrite: false
+    });
+    const lamp = new THREE.Mesh(geometry, material);
+    lamp.name = `RearBrakeLampTopology_${sourceMesh.name}`;
+    lamp.renderOrder = 2;
+    lamp.castShadow = false;
+    lamp.receiveShadow = false;
+    sourceMesh.add(lamp);
+    brakeLightLenses.push(material);
+  });
+  window.blissRearLampTopology = { sourceMeshes: sourceMeshes.length, extractedTriangles };
+}
+
+function extractRearLampTriangles(sourceMesh) {
+  const position = sourceMesh.geometry?.attributes?.position;
+  if (!position) return null;
+
+  const index = sourceMesh.geometry.index;
+  const vertexCount = index ? index.count : position.count;
+  const extractedPositions = [];
+  const localPoint = new THREE.Vector3();
+  const worldPoint = new THREE.Vector3();
+
+  for (let triangle = 0; triangle + 2 < vertexCount; triangle += 3) {
+    const vertexIndices = [0, 1, 2].map((offset) => index ? index.getX(triangle + offset) : triangle + offset);
+    const centroid = new THREE.Vector3();
+    vertexIndices.forEach((vertexIndex) => {
+      worldPoint.fromBufferAttribute(position, vertexIndex).applyMatrix4(sourceMesh.matrixWorld);
+      centroid.add(worldPoint);
+    });
+    centroid.multiplyScalar(1 / 3);
+
+    const isRearLampFace = centroid.z < 10
+      && centroid.y > 68
+      && centroid.y < 84
+      && (centroid.x < 35 || centroid.x > 87);
+    if (!isRearLampFace) continue;
+
+    vertexIndices.forEach((vertexIndex) => {
+      localPoint.fromBufferAttribute(position, vertexIndex);
+      extractedPositions.push(localPoint.x, localPoint.y, localPoint.z);
+    });
+  }
+
+  if (extractedPositions.length === 0) return null;
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(extractedPositions, 3));
+  geometry.computeVertexNormals();
+  geometry.computeBoundingBox();
+  geometry.computeBoundingSphere();
+  return geometry;
 }
 
 function markCarForMotionBlurMask(root) {
@@ -946,9 +1035,7 @@ function applyQualityLevel(level) {
   renderer.setPixelRatio(renderQuality.scale);
   renderer.setSize(window.innerWidth, window.innerHeight, false);
   resizeMotionBlurTargets();
-  cloudMaterials.forEach((material) => {
-    material.uniforms.uRaymarchSteps.value = preset.cloudSteps;
-  });
+  applyCloudRaymarchQuality();
   grassMaterials.forEach((material) => {
     material.uniforms.uGrassFlatteningEnabled.value = grassFlatteningEnabled ? 1 : 0;
     material.uniforms.uTrailStampCount.value = grassFlatteningEnabled ? trailStamps.length : 0;
@@ -2304,7 +2391,12 @@ function updateGrassLayerVisibility() {
   grassStats.visibleTilesByLod = visibleTilesByLod;
   grassStats.activeInstancesByLod = activeInstancesByLod;
   window.blissGrassStats = grassStats;
-  document.body.dataset.grassStats = JSON.stringify(grassStats);
+  // The live object is available for profiling without allocating a large
+  // JSON string every frame. Keep the DOM diagnostic at a human-readable rate.
+  if (clock.elapsedTime - lastGrassStatsDomPublishTime >= 0.5) {
+    document.body.dataset.grassStats = JSON.stringify(grassStats);
+    lastGrassStatsDomPublishTime = clock.elapsedTime;
+  }
 }
 
 function createFluffyGrassMaterial(layer) {
@@ -2600,8 +2692,24 @@ function resizeMotionBlurTargets() {
   const drawingBufferSize = renderer.getDrawingBufferSize(new THREE.Vector2());
   motionBlurCurrentTarget.setSize(drawingBufferSize.x, drawingBufferSize.y);
   motionBlurCarMaskTarget.setSize(drawingBufferSize.x, drawingBufferSize.y);
-  motionBlurBlurredTarget.setSize(drawingBufferSize.x, drawingBufferSize.y);
+  motionBlurBlurredTarget.setSize(
+    Math.ceil(drawingBufferSize.x * 0.5),
+    Math.ceil(drawingBufferSize.y * 0.5)
+  );
   invalidateMotionBlurHistory();
+}
+
+function applyCloudRaymarchQuality() {
+  const preset = QUALITY_PRESETS[sceneSettings.qualityLevel];
+  if (!preset) return;
+
+  // When dynamic resolution has already lowered the scene buffer, spending
+  // full raymarch cost on clouds cannot recover detail on screen.
+  const scaleRatio = THREE.MathUtils.clamp(renderQuality.scale / preset.renderScale, 0.55, 1);
+  const cloudSteps = Math.max(14, Math.round(preset.cloudSteps * scaleRatio * scaleRatio));
+  cloudMaterials.forEach((material) => {
+    material.uniforms.uRaymarchSteps.value = cloudSteps;
+  });
 }
 
 function updateDynamicResolution(frameTime) {
@@ -2634,6 +2742,7 @@ function updateDynamicResolution(frameTime) {
   renderer.setPixelRatio(renderQuality.scale);
   renderer.setSize(window.innerWidth, window.innerHeight, false);
   resizeMotionBlurTargets();
+  applyCloudRaymarchQuality();
   window.blissPerformance = { renderScale: renderQuality.scale, averageFrameTime };
 }
 
@@ -2654,7 +2763,11 @@ function handleKeyDown(event) {
 }
 
 function handleKeyUp(event) {
-  keys.delete(normalizeMovementCode(event));
+  const movementCode = normalizeMovementCode(event);
+  if (isMovementKey(movementCode)) {
+    event.preventDefault();
+  }
+  keys.delete(movementCode);
 }
 
 function isUiToggleKey(event) {
@@ -2684,6 +2797,7 @@ function isMovementKey(code) {
     "ArrowLeft",
     "ArrowDown",
     "ArrowRight",
+    "Space",
     "ShiftLeft",
     "ShiftRight"
   ].includes(code);
@@ -2918,35 +3032,148 @@ function readVehicleInput() {
 
 function stepVehiclePhysics(vehicleInput, fixedDelta) {
   if (vehicleController && carBody) {
-    if (vehicleInput.forwardInput !== 0 || vehicleInput.sideInput !== 0) {
+    if (vehicleInput.forwardInput !== 0 || vehicleInput.sideInput !== 0 || vehicleInput.handbrake) {
       carBody.wakeUp();
     }
 
-    physicsThrottle += (vehicleInput.forwardInput - physicsThrottle) * Math.min(1, fixedDelta * 7.0);
-    const engineForce = physicsThrottle * -4500.0;
+    const vehicleForward = new THREE.Vector3(0, 0, -1).applyQuaternion(carGroup.quaternion);
+    const forwardSpeed = player.velocity.dot(vehicleForward);
+    updateTransmission(Math.abs(forwardSpeed), vehicleInput.forwardInput, fixedDelta);
+    applyPhysicsGearShiftJolt(vehicleForward, forwardSpeed);
 
-    const isCoasting = vehicleInput.forwardInput === 0 && Math.abs(physicsThrottle) < 0.05;
-    let brakeForce = isCoasting ? 16.0 : 0.0;
-    if (vehicleInput.handbrake) {
-      brakeForce = 200.0;
-    }
-    const steering = vehicleInput.sideInput * 0.4;
-    
-    updateBrakeLights(vehicleInput.handbrake || vehicleInput.forwardInput < -0.1);
+    const throttleTarget = THREE.MathUtils.clamp(vehicleInput.forwardInput, -1, 1);
+    const throttleResponse = throttleTarget === 0 ? 5.4 : 7.6;
+    physicsThrottle += (throttleTarget - physicsThrottle) * Math.min(1, fixedDelta * throttleResponse);
 
-    for (let i = 0; i < 4; i += 1) {
-      vehicleController.setWheelEngineForce(i, engineForce);
-      vehicleController.setWheelBrake(i, brakeForce);
+    const brakingForReverse = vehicleInput.forwardInput < -0.1 && forwardSpeed > 1.2;
+    const brakingForForward = vehicleInput.forwardInput > 0.1 && forwardSpeed < -1.2;
+    const isBraking = brakingForReverse || brakingForForward;
+    const torque = getEngineTorque(Math.abs(forwardSpeed));
+    const shiftCut = transmission.shiftTimer > 0 ? 0.12 : 1;
+    let engineForce = 0;
+
+    if (!isBraking && !vehicleInput.handbrake) {
+      if (physicsThrottle > 0.02) {
+        engineForce = -physicsThrottle * 6400 * CAR_PERFORMANCE_MULTIPLIER * TRANSMISSION_GEARS[transmission.gear].driveMultiplier * torque * shiftCut;
+      } else if (physicsThrottle < -0.02 && Math.abs(forwardSpeed) < 7.5) {
+        // Reverse is deliberately shorter and gentler than first gear.
+        engineForce = -physicsThrottle * 3300 * CAR_PERFORMANCE_MULTIPLIER * torque;
+      }
     }
+
+    const engineBraking = Math.abs(vehicleInput.forwardInput) < 0.04 && Math.abs(forwardSpeed) > 0.8
+      ? 34 + transmission.rpm / 260
+      : 0;
+    // S is a deliberate, progressive slowdown. Space is the dedicated rear
+    // handbrake, so it gets the only aggressive brake force.
+    const serviceBrake = isBraking ? 285 : engineBraking;
+    const rearHandbrake = vehicleInput.handbrake ? 5600 : 0;
+    const steeringLimit = 0.42 * (1 - THREE.MathUtils.clamp(Math.abs(forwardSpeed) / carMaxSpeed, 0, 1) * 0.52);
+    const steering = vehicleInput.sideInput * steeringLimit;
+
+    updateBrakeLights(vehicleInput.handbrake || isBraking);
+
+    // AE85-style rear-wheel drive: front wheels steer and brake, rears drive.
+    vehicleController.setWheelEngineForce(0, 0);
+    vehicleController.setWheelEngineForce(1, 0);
+    vehicleController.setWheelEngineForce(2, engineForce);
+    vehicleController.setWheelEngineForce(3, engineForce);
+    vehicleController.setWheelBrake(0, serviceBrake);
+    vehicleController.setWheelBrake(1, serviceBrake);
+    vehicleController.setWheelBrake(2, serviceBrake * 0.72 + rearHandbrake);
+    vehicleController.setWheelBrake(3, serviceBrake * 0.72 + rearHandbrake);
+    vehicleController.setWheelFrictionSlip(0, 3.05);
+    vehicleController.setWheelFrictionSlip(1, 3.05);
+    vehicleController.setWheelFrictionSlip(2, vehicleInput.handbrake ? 0.28 : 2.75);
+    vehicleController.setWheelFrictionSlip(3, vehicleInput.handbrake ? 0.28 : 2.75);
     vehicleController.setWheelSteering(0, steering);
     vehicleController.setWheelSteering(1, steering);
     vehicleController.setWheelSteering(2, 0);
     vehicleController.setWheelSteering(3, 0);
 
     vehicleController.updateVehicle(fixedDelta);
+    applyHandbrakeDrift(vehicleInput, forwardSpeed, fixedDelta);
   }
 
   physicsWorld.step();
+}
+
+function applyHandbrakeDrift(vehicleInput, forwardSpeed, fixedDelta) {
+  if (!vehicleInput.handbrake || !carBody || !carGroup || Math.abs(forwardSpeed) < 2.5) {
+    return;
+  }
+
+  const driftInput = vehicleInput.sideInput;
+  if (Math.abs(driftInput) < 0.04) {
+    return;
+  }
+
+  const speed = Math.abs(forwardSpeed);
+  const carRight = new THREE.Vector3(1, 0, 0).applyQuaternion(carGroup.quaternion);
+  // A small lateral impulse and yaw impulse emulate rear-lock breakaway while
+  // preserving enough front grip for the player to catch the slide.
+  const lateralImpulse = driftInput * speed * 15 * fixedDelta * 60;
+  const yawImpulse = -driftInput * speed * 32 * fixedDelta * 60;
+  if (typeof carBody.applyImpulse === "function") {
+    carBody.applyImpulse(new RAPIER.Vector3(carRight.x * lateralImpulse, 0, carRight.z * lateralImpulse), true);
+  }
+  if (typeof carBody.applyTorqueImpulse === "function") {
+    carBody.applyTorqueImpulse(new RAPIER.Vector3(0, yawImpulse, 0), true);
+  }
+}
+
+function updateTransmission(speed, throttleInput, delta) {
+  transmission.shiftTimer = Math.max(0, transmission.shiftTimer - delta);
+  transmission.shifting = transmission.shiftTimer > 0;
+
+  if (!transmission.shifting && throttleInput > 0.12) {
+    const current = TRANSMISSION_GEARS[transmission.gear];
+    const previous = TRANSMISSION_GEARS[Math.max(1, transmission.gear - 1)];
+    if (transmission.gear < 5 && speed > current.topSpeed * 0.91) {
+      transmission.gear += 1;
+      transmission.shiftTimer = 0.14;
+      transmission.shiftJolt = 0.032;
+    } else if (transmission.gear > 1 && speed < previous.topSpeed * 0.6) {
+      transmission.gear -= 1;
+      transmission.shiftTimer = 0.11;
+      transmission.shiftJolt = 0.016;
+    }
+  }
+
+  const gear = TRANSMISSION_GEARS[transmission.gear];
+  const targetRpm = THREE.MathUtils.clamp(900 + speed / gear.topSpeed * 6500, 850, 7600);
+  const rpmBlend = 1 - Math.exp(-13 * delta);
+  transmission.rpm += (targetRpm - transmission.rpm) * rpmBlend;
+  window.blissVehicleStats = {
+    gear: transmission.gear,
+    rpm: Math.round(transmission.rpm),
+    shifting: transmission.shifting
+  };
+}
+
+function applyPhysicsGearShiftJolt(vehicleForward, forwardSpeed) {
+  const jolt = transmission.shiftJolt;
+  transmission.shiftJolt = 0;
+  if (!jolt || !carBody || Math.abs(forwardSpeed) < 1) {
+    return;
+  }
+
+  const velocity = carBody.linvel();
+  const speedChange = -forwardSpeed * jolt;
+  // A tiny longitudinal speed loss sells the clutch engagement without
+  // introducing a lighting, camera, or steering discontinuity.
+  carBody.setLinvel(new RAPIER.Vector3(
+    velocity.x + vehicleForward.x * speedChange,
+    velocity.y,
+    velocity.z + vehicleForward.z * speedChange
+  ), true);
+}
+
+function getEngineTorque(speed) {
+  const gear = TRANSMISSION_GEARS[transmission.gear];
+  const normalizedRpm = THREE.MathUtils.clamp((speed / gear.topSpeed) * 1.05, 0, 1.12);
+  // Broad mid-range torque with a gentle taper near redline.
+  return THREE.MathUtils.clamp(0.72 + Math.sin(normalizedRpm * Math.PI * 0.88) * 0.38 - Math.max(0, normalizedRpm - 0.94) * 1.7, 0.48, 1.08);
 }
 
 function syncVehicleFromPhysics(delta, vehicleInput) {
@@ -3031,18 +3258,40 @@ function updateFallbackCar(delta) {
   if (keys.has("KeyA") || keys.has("ArrowLeft")) sideInput += 1;
   if (keys.has("KeyD") || keys.has("ArrowRight")) sideInput -= 1;
 
-  carSpeed += forwardInput * carAcceleration * delta;
+  updateTransmission(Math.abs(carSpeed), forwardInput, delta);
+  const shiftJolt = transmission.shiftJolt;
+  transmission.shiftJolt = 0;
+  if (shiftJolt && Math.abs(carSpeed) > 1) {
+    carSpeed *= 1 - shiftJolt;
+  }
+  const gearDrive = TRANSMISSION_GEARS[transmission.gear].driveMultiplier;
+  const torque = getEngineTorque(Math.abs(carSpeed));
+  const shiftCut = transmission.shiftTimer > 0 ? 0.12 : 1;
+  const brakingForReverse = forwardInput < -0.1 && carSpeed > 1.2;
+  const brakingForForward = forwardInput > 0.1 && carSpeed < -1.2;
+
+  if (!brakingForReverse && !brakingForForward) {
+    const driveInput = forwardInput >= 0 ? forwardInput : forwardInput * 0.5;
+    carSpeed += driveInput * carAcceleration * gearDrive * torque * shiftCut * delta;
+  }
   
   if (handbrake) {
-    carSpeed *= Math.pow(0.1, delta * 60);
+    const speedBeforeBrake = carSpeed;
+    carSpeed *= Math.exp(-7.8 * delta);
+    // Releasing rear traction lets a steering input rotate the car rather
+    // than simply stopping it in a straight line.
+    player.yaw += sideInput * Math.sign(speedBeforeBrake || 1) * Math.min(Math.abs(speedBeforeBrake) * 0.018, 0.72) * delta * 34;
+  } else if (brakingForReverse || brakingForForward) {
+    carSpeed += -Math.sign(carSpeed) * carBrake * 0.65 * delta;
   } else {
     carSpeed *= Math.pow(carFriction, delta * 60);
   }
   
   carSpeed = THREE.MathUtils.clamp(carSpeed, -carMaxSpeed * 0.42, carMaxSpeed);
-  carSteering += (sideInput * carMaxSteering - carSteering) * Math.min(1, delta * 8);
+  const steeringScale = 1 - THREE.MathUtils.clamp(Math.abs(carSpeed) / carMaxSpeed, 0, 1) * 0.48;
+  carSteering += (sideInput * carMaxSteering * steeringScale - carSteering) * Math.min(1, delta * 8);
 
-  updateBrakeLights(handbrake || forwardInput < -0.1);
+  updateBrakeLights(handbrake || brakingForReverse || brakingForForward);
 
   if (Math.abs(carSpeed) > 0.05) {
     player.yaw += carSteering * carSpeed * delta;
@@ -3076,8 +3325,11 @@ function updateChaseCamera(delta) {
 
   cameraZoom.distance += (cameraZoom.targetDistance - cameraZoom.distance) * zoomBlend;
   cameraZoom.fov += (cameraZoom.targetFov - cameraZoom.fov) * zoomBlend;
-  if (Math.abs(camera.fov - cameraZoom.fov) > 0.001) {
-    camera.fov = cameraZoom.fov;
+  const drivingSpeed = Math.hypot(player.velocity.x, player.velocity.z);
+  const speedFovBoost = THREE.MathUtils.smoothstep(drivingSpeed, 7, carMaxSpeed) * 4.6;
+  const effectiveFov = cameraZoom.fov + speedFovBoost;
+  if (Math.abs(camera.fov - effectiveFov) > 0.001) {
+    camera.fov = effectiveFov;
     camera.updateProjectionMatrix();
   }
   let chaseDistance = cameraZoom.distance;
@@ -3232,10 +3484,16 @@ function updateMotionBlur() {
   const planarSpeed = Math.hypot(player.velocity.x, player.velocity.z);
   window.blissMotionBlur = {
     enabled: sceneSettings.experimentalMotionBlur,
+    active: shouldRenderMotionBlur(),
     speed: planarSpeed,
     mode: "depth-velocity",
     multiplier: sceneSettings.experimentalMotionBlurStrength
   };
+}
+
+function shouldRenderMotionBlur() {
+  return sceneSettings.experimentalMotionBlur
+    && Math.hypot(player.velocity.x, player.velocity.z) > 0.65;
 }
 
 function renderMotionBlurredScene() {
@@ -3358,6 +3616,13 @@ function updateTrailStampUniforms() {
 }
 
 function updateBrakeLights(isBraking) {
+  brakeLightLenses.forEach((material) => {
+    // Keep a dim red tail lamp at rest, then lift it well above the scene's
+    // exposure while braking. MeshBasicMaterial keeps the result independent
+    // of the car paint and surrounding grass lighting.
+    material.color.setHex(isBraking ? 0xff1a00 : 0x5c0000);
+  });
+
   brakeLightMaterials.forEach((m) => {
     if (!m.userData.baseEmissive) {
       m.userData.baseEmissive = m.emissive.clone();
@@ -3444,7 +3709,7 @@ function animate() {
   animateCarFade();
   updateJoystickUI();
   updateMotionBlur();
-  if (sceneSettings.experimentalMotionBlur) {
+  if (shouldRenderMotionBlur()) {
     renderMotionBlurredScene();
   } else {
     invalidateMotionBlurHistory();
