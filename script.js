@@ -45,6 +45,12 @@ const tuningControls = {
   fogDensity: document.querySelector("#fog-density-control"),
   windStrength: document.querySelector("#wind-strength-control"),
   showFps: document.querySelector("#show-fps-control"),
+  cloudTextPosX: document.querySelector("#cloud-text-x-control"),
+  cloudTextPosY: document.querySelector("#cloud-text-y-control"),
+  cloudTextPosZ: document.querySelector("#cloud-text-z-control"),
+  cloudTextRotX: document.querySelector("#cloud-text-rx-control"),
+  cloudTextRotY: document.querySelector("#cloud-text-ry-control"),
+  cloudTextRotZ: document.querySelector("#cloud-text-rz-control"),
   exportSettings: document.querySelector("#export-settings"),
   saveSpawn: document.querySelector("#save-spawn")
 };
@@ -60,7 +66,13 @@ const sceneSettings = {
   fogColor: "#e0efff",
   fogDensity: 0.0072,
   windStrength: 1,
-  qualityLevel: 3
+  qualityLevel: 3,
+  cloudTextPosX: 154,
+  cloudTextPosY: 117,
+  cloudTextPosZ: -217,
+  cloudTextRotX: -14,
+  cloudTextRotY: -39,
+  cloudTextRotZ: 0
 };
 
 const QUALITY_PRESETS = [
@@ -597,7 +609,7 @@ function attachCarModel(carModel) {
     steerPivot.position.copy(wheelCenter);
     steerPivot.add(spinPivot);
     wheelParts[region].spin.forEach((part) => spinPivot.add(part));
-    wheelParts[region].steer.forEach((part) => steerPivot.add(part));
+    wheelParts[region].steer.forEach((part) => spinPivot.add(part));
     steerPivot.userData.authoredWheel = true;
     steerPivot.userData.basePosition = steerPivot.position.clone();
     steerPivot.userData.spinPivot = spinPivot;
@@ -724,7 +736,13 @@ function initializeTuningPanel() {
     tuningControls.skyColor,
     tuningControls.fogColor,
     tuningControls.fogDensity,
-    tuningControls.windStrength
+    tuningControls.windStrength,
+    tuningControls.cloudTextPosX,
+    tuningControls.cloudTextPosY,
+    tuningControls.cloudTextPosZ,
+    tuningControls.cloudTextRotX,
+    tuningControls.cloudTextRotY,
+    tuningControls.cloudTextRotZ
   ].filter(Boolean);
 
   inputs.forEach((input) => {
@@ -851,6 +869,12 @@ function syncControlsFromSettings() {
   if (tuningControls.fogColor) tuningControls.fogColor.value = sceneSettings.fogColor;
   if (tuningControls.fogDensity) tuningControls.fogDensity.value = sceneSettings.fogDensity;
   if (tuningControls.windStrength) tuningControls.windStrength.value = sceneSettings.windStrength;
+  if (tuningControls.cloudTextPosX) tuningControls.cloudTextPosX.value = sceneSettings.cloudTextPosX;
+  if (tuningControls.cloudTextPosY) tuningControls.cloudTextPosY.value = sceneSettings.cloudTextPosY;
+  if (tuningControls.cloudTextPosZ) tuningControls.cloudTextPosZ.value = sceneSettings.cloudTextPosZ;
+  if (tuningControls.cloudTextRotX) tuningControls.cloudTextRotX.value = sceneSettings.cloudTextRotX;
+  if (tuningControls.cloudTextRotY) tuningControls.cloudTextRotY.value = sceneSettings.cloudTextRotY;
+  if (tuningControls.cloudTextRotZ) tuningControls.cloudTextRotZ.value = sceneSettings.cloudTextRotZ;
 }
 
 function updateSettingsFromControls() {
@@ -905,6 +929,25 @@ function applySceneSettings() {
     distantGrassMaterial.color
       .set(sceneSettings.grassTipColorB)
       .lerp(new THREE.Color(sceneSettings.grassTipColorA), 0.34);
+  }
+
+  if (clouds && clouds.length > 0 && clouds[0].material.uniforms) {
+    const cloudMat = clouds[0].material;
+    const euler = new THREE.Euler(
+      THREE.MathUtils.degToRad(sceneSettings.cloudTextRotX),
+      THREE.MathUtils.degToRad(sceneSettings.cloudTextRotY),
+      THREE.MathUtils.degToRad(sceneSettings.cloudTextRotZ),
+      "YXZ"
+    );
+    const quat = new THREE.Quaternion().setFromEuler(euler);
+    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(quat);
+    const up = new THREE.Vector3(0, 1, 0).applyQuaternion(quat);
+    const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(quat);
+    
+    cloudMat.uniforms.uTextCenter.value.set(sceneSettings.cloudTextPosX, sceneSettings.cloudTextPosY, sceneSettings.cloudTextPosZ);
+    cloudMat.uniforms.uTextRight.value.copy(right);
+    cloudMat.uniforms.uTextUp.value.copy(up);
+    cloudMat.uniforms.uTextForward.value.copy(forward);
   }
 }
 
@@ -1179,6 +1222,28 @@ function createGrassTexture() {
   return texture;
 }
 
+function createCloudTextTexture() {
+  const textureCanvas = document.createElement("canvas");
+  textureCanvas.width = 1024;
+  textureCanvas.height = 256;
+  const context = textureCanvas.getContext("2d");
+  
+  context.fillStyle = "#000000";
+  context.fillRect(0, 0, textureCanvas.width, textureCanvas.height);
+  
+  context.fillStyle = "#ffffff";
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.font = "bold 130px sans-serif";
+  
+  context.fillText("a blissful drive", textureCanvas.width / 2, textureCanvas.height / 2);
+  
+  const texture = new THREE.CanvasTexture(textureCanvas);
+  texture.minFilter = THREE.LinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  return texture;
+}
+
 function createClouds() {
   const volumetricCloudVertexShader = `
     varying vec3 vWorldPosition;
@@ -1199,6 +1264,13 @@ function createClouds() {
     uniform vec3 uSunColor;
     uniform vec3 uSkyColor;
     uniform int uRaymarchSteps;
+    
+    uniform sampler2D uCloudText;
+    uniform float uTextProgress;
+    uniform vec3 uTextCenter;
+    uniform vec3 uTextRight;
+    uniform vec3 uTextUp;
+    uniform vec3 uTextForward;
 
     float hash(vec3 p) {
       p = fract(p * 0.3183099 + 0.1);
@@ -1250,6 +1322,33 @@ function createClouds() {
       
       float density = cirrusDensity + cumulusDensity;
       
+      // --- CLOUD TEXT ---
+      vec3 localP = p - uTextCenter;
+      float zDist = dot(localP, uTextForward);
+      
+      // Keep it thin (8m thick slice) to avoid smearing when viewed from an angle
+      if (abs(zDist) < 4.0) {
+        float xDist = dot(localP, uTextRight);
+        float yDist = dot(localP, uTextUp);
+        
+        if (abs(xDist) < 250.0 && abs(yDist) < 60.0) {
+          // Map local X and Y bounds to 0-1 UV space
+          vec2 uv = vec2(xDist / 500.0 + 0.5, yDist / 120.0 + 0.5);
+          float textMask = texture2D(uCloudText, uv).r;
+          
+          float spawnMask = smoothstep(uTextProgress - 0.05, uTextProgress + 0.05, uv.x);
+          textMask *= (1.0 - spawnMask);
+
+          if (textMask > 0.01) {
+            float textNoise = fbm(p * 0.03 + uTime * 0.2);
+            float textDensity = textMask * max(0.0, textNoise - 0.2) * 18.0;
+            
+            float zFade = 1.0 - (abs(zDist) / 4.0);
+            density += textDensity * zFade;
+          }
+        }
+      }
+
       // Fade out at extreme distance
       float distFade = 1.0 - smoothstep(1500.0, 2500.0, length(p.xz - uCameraPos.xz));
       density *= distFade;
@@ -1317,7 +1416,13 @@ function createClouds() {
       uBaseColor: { value: new THREE.Color(sceneSettings.fogColor) },
       uSkyColor: { value: new THREE.Color(sceneSettings.skyColor) },
       uSunColor: { value: new THREE.Color(0xffffff) },
-      uRaymarchSteps: { value: QUALITY_PRESETS[sceneSettings.qualityLevel].cloudSteps }
+      uRaymarchSteps: { value: QUALITY_PRESETS[sceneSettings.qualityLevel].cloudSteps },
+      uCloudText: { value: createCloudTextTexture() },
+      uTextProgress: { value: 0.0 },
+      uTextCenter: { value: new THREE.Vector3(0, 110, -250) },
+      uTextRight: { value: new THREE.Vector3(1, 0, 0) },
+      uTextUp: { value: new THREE.Vector3(0, 1, 0) },
+      uTextForward: { value: new THREE.Vector3(0, 0, 1) }
     },
     transparent: true,
     depthWrite: false,
@@ -2838,6 +2943,9 @@ function animateClouds(delta) {
     if (cloudMat && cloudMat.uniforms) {
       cloudMat.uniforms.uTime.value = clock.elapsedTime;
       cloudMat.uniforms.uCameraPos.value.copy(camera.position);
+      
+      // Animate text progress from 0.0 to 1.1 over the first 5 seconds
+      cloudMat.uniforms.uTextProgress.value = Math.min(1.1, clock.elapsedTime / 5.0);
       cloudMat.uniforms.uBaseColor.value.set(sceneSettings.fogColor);
       cloudMat.uniforms.uSkyColor.value.set(sceneSettings.skyColor);
     }
@@ -2971,3 +3079,5 @@ function updateFpsMeter(delta) {
   fpsBar.style.transform = `scaleX(${fpsRatio})`;
   fpsBar.style.background = fpsStats.displayFps < 30 ? "#ff4444" : fpsStats.displayFps < 50 ? "#ffaa00" : "#44ff44";
 }
+
+
