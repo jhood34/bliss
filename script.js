@@ -1023,6 +1023,59 @@ function createTerrain() {
     side: THREE.DoubleSide
   });
 
+  terrainMaterial.userData = {
+    uPlayerPosition: { value: new THREE.Vector2() },
+    uCarRight: { value: new THREE.Vector2() },
+    uCarForward: { value: new THREE.Vector2() },
+    uShadowParams1: { value: new THREE.Vector4(0.0, -0.2, 1.6, 3.2) },
+    uShadowParams2: { value: new THREE.Vector3(-0.3, 1.2, 0.25) }
+  };
+
+  terrainMaterial.onBeforeCompile = (shader) => {
+    shader.uniforms.uPlayerPosition = terrainMaterial.userData.uPlayerPosition;
+    shader.uniforms.uCarRight = terrainMaterial.userData.uCarRight;
+    shader.uniforms.uCarForward = terrainMaterial.userData.uCarForward;
+    shader.uniforms.uShadowParams1 = terrainMaterial.userData.uShadowParams1;
+    shader.uniforms.uShadowParams2 = terrainMaterial.userData.uShadowParams2;
+    
+    shader.vertexShader = shader.vertexShader.replace(
+      '#include <common>',
+      `#include <common>
+      varying vec2 vWorldXZ;`
+    );
+    
+    shader.vertexShader = shader.vertexShader.replace(
+      '#include <worldpos_vertex>',
+      `#include <worldpos_vertex>
+      vWorldXZ = (modelMatrix * vec4(transformed, 1.0)).xz;`
+    );
+    
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <common>',
+      `#include <common>
+      uniform vec2 uPlayerPosition;
+      uniform vec2 uCarRight;
+      uniform vec2 uCarForward;
+      uniform vec4 uShadowParams1;
+      uniform vec3 uShadowParams2;
+      varying vec2 vWorldXZ;`
+    );
+    
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <color_fragment>',
+      `#include <color_fragment>
+      vec2 playerDelta = vWorldXZ - uPlayerPosition;
+      vec2 shadowLocal = vec2(
+        dot(playerDelta, uCarRight) + uShadowParams1.x,
+        dot(playerDelta, uCarForward) + uShadowParams1.y
+      );
+      vec2 shadowD = abs(shadowLocal) - uShadowParams1.zw;
+      float shadowSdf = length(max(shadowD, 0.0)) + min(max(shadowD.x, shadowD.y), 0.0);
+      float shadowAmount = 1.0 - smoothstep(uShadowParams2.x, uShadowParams2.y, shadowSdf);
+      diffuseColor.rgb *= mix(1.0, uShadowParams2.z, shadowAmount);`
+    );
+  };
+
   terrain = new THREE.Mesh(terrainGeometry, terrainMaterial);
   terrain.receiveShadow = true;
   terrain.name = "rolling-grass";
@@ -2007,7 +2060,9 @@ function createFluffyGrassMaterial(layer) {
       uTipColor1: { value: new THREE.Color(sceneSettings.grassTipColorA) },
       uTipColor2: { value: new THREE.Color(sceneSettings.grassTipColorB) },
       uFogColor: { value: scene.fog.color },
-      uFogDensity: { value: scene.fog.density }
+      uFogDensity: { value: scene.fog.density },
+      uShadowParams1: { value: new THREE.Vector4(0.0, -0.2, 1.6, 3.2) },
+      uShadowParams2: { value: new THREE.Vector3(-0.3, 1.2, 0.25) }
     },
     vertexShader: `
       uniform float uTime;
@@ -2027,6 +2082,8 @@ function createFluffyGrassMaterial(layer) {
       uniform vec4 uTrailStampPositionRight[12];
       uniform vec4 uTrailStampForwardFade[12];
       uniform int uTrailStampCount;
+      uniform vec4 uShadowParams1;
+      uniform vec3 uShadowParams2;
 
       varying vec2 vUv;
       varying vec2 vGlobalUv;
@@ -2036,6 +2093,7 @@ function createFluffyGrassMaterial(layer) {
       varying float vBladeFade;
       varying float vLodDither;
       varying float vCrushAmount;
+      varying float vShadowAmount;
 
       float hash12(vec2 p) {
         vec3 p3 = fract(vec3(p.xyx) * 0.1031);
@@ -2085,6 +2143,15 @@ function createFluffyGrassMaterial(layer) {
         
         vec2 d = abs(localBladePos) - vec2(1.95, 4.0);
         float sdf = length(max(d, 0.0)) + min(max(d.x, d.y), 0.0);
+
+        // --- AMBIENT OCCLUSION SHADOW (OVERCAST) ---
+        vec2 shadowLocal = vec2(
+          dot(playerDelta, uCarRight) + uShadowParams1.x,
+          dot(playerDelta, uCarForward) + uShadowParams1.y 
+        );
+        vec2 shadowD = abs(shadowLocal) - uShadowParams1.zw;
+        float shadowSdf = length(max(shadowD, 0.0)) + min(max(shadowD.x, shadowD.y), 0.0);
+        vShadowAmount = 1.0 - smoothstep(uShadowParams2.x, uShadowParams2.y, shadowSdf);
 
         // Lower quality levels skip deformation entirely. Cull only blades
         // intersecting the full 9.2 x 3.94 car footprint so they cannot poke
@@ -2180,6 +2247,7 @@ function createFluffyGrassMaterial(layer) {
       uniform vec3 uBaseColor;
       uniform vec3 uTipColor1;
       uniform vec3 uTipColor2;
+      uniform vec3 uShadowParams2;
 
       varying vec2 vUv;
       varying vec2 vGlobalUv;
@@ -2189,6 +2257,7 @@ function createFluffyGrassMaterial(layer) {
       varying float vBladeFade;
       varying float vLodDither;
       varying float vCrushAmount;
+      varying float vShadowAmount;
 
       void main() {
         vec4 grassAlpha = texture2D(uGrassAlphaTexture, vUv);
@@ -2204,7 +2273,11 @@ function createFluffyGrassMaterial(layer) {
         vec3 tipColor = mix(uTipColor1, uTipColor2, grassVariation.r);
         vec3 litGrass = mix(uBaseColor, tipColor, clamp(vHeight, 0.0, 1.0));
         float lightAmount = 0.96 + max(dot(normalize(vNormal), normalize(vec3(-0.25, 0.9, 0.25))), 0.0) * 0.28;
+        
+        // Apply sun shadow from the car (uShadowParams2.z is the target darkness)
+        lightAmount *= mix(1.0, uShadowParams2.z, vShadowAmount);
         litGrass *= lightAmount;
+        
         float crushShade = smoothstep(0.18, 0.86, vCrushAmount);
         litGrass = mix(litGrass, litGrass * vec3(0.55, 0.64, 0.42), crushShade * 0.5);
 
@@ -2797,6 +2870,12 @@ function animateGrass(time) {
 
   updateTrailStampUniforms();
 
+  if (terrainMaterial && terrainMaterial.userData.uPlayerPosition) {
+    terrainMaterial.userData.uPlayerPosition.value.set(player.position.x, player.position.z);
+    terrainMaterial.userData.uCarRight.value.copy(carRight2D);
+    terrainMaterial.userData.uCarForward.value.copy(carForward2D);
+  }
+
   grassMaterials.forEach((material) => {
     material.uniforms.uTime.value = time;
     material.uniforms.uPlayerPosition.value.set(player.position.x, player.position.z);
@@ -2887,7 +2966,8 @@ function updateFpsMeter(delta) {
   fpsStats.frames = 0;
   fpsStats.elapsed = 0;
 
-  const fpsPercent = THREE.MathUtils.clamp(fpsStats.displayFps / 60, 0, 1) * 100;
-  fpsValue.textContent = `${fpsStats.displayFps} FPS`;
-  fpsBar.style.width = `${fpsPercent}%`;
+  fpsValue.textContent = fpsStats.displayFps;
+  const fpsRatio = Math.min(fpsStats.displayFps / 60, 1);
+  fpsBar.style.transform = `scaleX(${fpsRatio})`;
+  fpsBar.style.background = fpsStats.displayFps < 30 ? "#ff4444" : fpsStats.displayFps < 50 ? "#ffaa00" : "#44ff44";
 }
