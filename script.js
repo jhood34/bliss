@@ -2954,8 +2954,8 @@ function updateChaseCamera(delta) {
   
   const aspect = window.innerWidth / window.innerHeight;
   const isPortrait = aspect < 1.0;
-  const lookFactor = isPortrait ? 0.06 : 0.10;
-  const maxLook = isPortrait ? 3.0 : 5.0;
+  const lookFactor = isPortrait ? 0.08 : 0.12;
+  const maxLook = isPortrait ? 4.0 : 6.0;
   
   const lookAhead = cameraFollow.velocity.clone().multiplyScalar(lookFactor);
   if (lookAhead.lengthSq() > maxLook * maxLook) {
