@@ -331,7 +331,7 @@ function initializeVolumeControl() {
 
   // Sync slider → BGM volume + update icon
   volumeSlider.addEventListener("input", () => {
-    const v = parseFloat(volumeSlider.value);
+    const v = Math.min(1, Math.max(0, parseFloat(volumeSlider.value)));
     if (bgm) {
       bgm.volume = v;
     }
@@ -2371,7 +2371,7 @@ function startBgm() {
 
     function fadeTick(now) {
       const elapsed = now - startTime;
-      bgm.volume = Math.min(targetVolume, (elapsed / duration) * targetVolume);
+      bgm.volume = Math.min(1, Math.max(0, (elapsed / duration) * targetVolume));
       if (elapsed < duration) {
         requestAnimationFrame(fadeTick);
       } else if (volumeSlider) {
