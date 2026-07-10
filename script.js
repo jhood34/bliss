@@ -675,7 +675,6 @@ function attachCarModel(carModel) {
   carModel.updateMatrixWorld(true);
   const wheelSourceMeshes = [];
   const edgeOverlayMeshes = [];
-  const rearLampSourceMeshes = [];
   carModel.traverse((child) => {
     if (!child.isMesh) return;
     child.castShadow = true;
@@ -685,8 +684,9 @@ function attachCarModel(carModel) {
       edgeOverlayMeshes.push(child);
       return;
     }
-    if (materialName.includes("vehiclelights")) {
-      rearLampSourceMeshes.push(child);
+    if (materialName === "vehiclelights1") {
+      const materials = Array.isArray(child.material) ? child.material : [child.material];
+      materials.forEach((material) => brakeLightMaterials.push(material));
     }
     if (CAR_WHEEL_SPIN_MATERIALS.has(materialName) || CAR_WHEEL_STEER_MATERIALS.has(materialName)) {
       wheelSourceMeshes.push(child);
@@ -701,8 +701,6 @@ function attachCarModel(carModel) {
     materials.forEach((material) => { if (material) edgeMaterials.add(material); });
   });
   edgeMaterials.forEach((material) => material.dispose());
-
-  addRearBrakeLightGeometry(rearLampSourceMeshes);
 
   const wheelParts = CAR_WHEEL_RAW_CENTERS.map(() => ({ spin: [], steer: [] }));
   wheelSourceMeshes.forEach((sourceMesh) => {
@@ -755,74 +753,6 @@ function attachCarModel(carModel) {
     carGroup.remove(previousVisual);
     disposeCarModel(previousVisual);
   }
-}
-
-function addRearBrakeLightGeometry(sourceMeshes) {
-  let extractedTriangles = 0;
-  sourceMeshes.forEach((sourceMesh) => {
-    const geometry = extractRearLampTriangles(sourceMesh);
-    if (!geometry) return;
-
-    extractedTriangles += geometry.attributes.position.count / 3;
-    const material = new THREE.MeshBasicMaterial({
-      color: 0x5c0000,
-      toneMapped: false,
-      side: THREE.DoubleSide,
-      // The imported trim has a coincident opaque layer. Rendering this exact
-      // lamp topology after that layer resolves the bad export without adding
-      // any invented geometry in front of the car.
-      depthTest: false,
-      depthWrite: false
-    });
-    const lamp = new THREE.Mesh(geometry, material);
-    lamp.name = `RearBrakeLampTopology_${sourceMesh.name}`;
-    lamp.renderOrder = 2;
-    lamp.castShadow = false;
-    lamp.receiveShadow = false;
-    sourceMesh.add(lamp);
-    brakeLightLenses.push(material);
-  });
-  window.blissRearLampTopology = { sourceMeshes: sourceMeshes.length, extractedTriangles };
-}
-
-function extractRearLampTriangles(sourceMesh) {
-  const position = sourceMesh.geometry?.attributes?.position;
-  if (!position) return null;
-
-  const index = sourceMesh.geometry.index;
-  const vertexCount = index ? index.count : position.count;
-  const extractedPositions = [];
-  const localPoint = new THREE.Vector3();
-  const worldPoint = new THREE.Vector3();
-
-  for (let triangle = 0; triangle + 2 < vertexCount; triangle += 3) {
-    const vertexIndices = [0, 1, 2].map((offset) => index ? index.getX(triangle + offset) : triangle + offset);
-    const centroid = new THREE.Vector3();
-    vertexIndices.forEach((vertexIndex) => {
-      worldPoint.fromBufferAttribute(position, vertexIndex).applyMatrix4(sourceMesh.matrixWorld);
-      centroid.add(worldPoint);
-    });
-    centroid.multiplyScalar(1 / 3);
-
-    const isRearLampFace = centroid.z < 10
-      && centroid.y > 68
-      && centroid.y < 84
-      && (centroid.x < 35 || centroid.x > 87);
-    if (!isRearLampFace) continue;
-
-    vertexIndices.forEach((vertexIndex) => {
-      localPoint.fromBufferAttribute(position, vertexIndex);
-      extractedPositions.push(localPoint.x, localPoint.y, localPoint.z);
-    });
-  }
-
-  if (extractedPositions.length === 0) return null;
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute("position", new THREE.Float32BufferAttribute(extractedPositions, 3));
-  geometry.computeVertexNormals();
-  geometry.computeBoundingBox();
-  geometry.computeBoundingSphere();
-  return geometry;
 }
 
 function markCarForMotionBlurMask(root) {
