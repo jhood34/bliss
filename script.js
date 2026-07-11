@@ -483,7 +483,7 @@ const CAR_MODEL_PATHS = [
   null,
   "car/toyota_levin_ae85_grandfather/lods/levin_lod_1.glb",
   "car/toyota_levin_ae85_grandfather/lods/levin_lod_2.glb",
-  "car/toyota_levin_ae85_grandfather/lods/levin_lod_3.glb",
+  "car/toyota_levin_ae85_grandfather/lods/levin_lod_4.glb",
   "car/toyota_levin_ae85_grandfather/lods/levin_lod_4.glb",
   CAR_MODEL_PATH
 ];
