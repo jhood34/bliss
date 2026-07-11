@@ -308,6 +308,13 @@ camera.rotation.set(player.pitch, player.yaw, 0);
 const keys = new Set();
 let startupHandbrakeActive = true;
 let firstMobileJoystickPitchApplied = false;
+const mobileJoystickPitchCorrection = {
+  active: false,
+  elapsed: 0,
+  duration: 0.9,
+  current: 0,
+  target: -0.065
+};
 const clock = new THREE.Clock();
 const forward = new THREE.Vector3();
 const right = new THREE.Vector3();
@@ -2960,7 +2967,30 @@ function applyFirstMobileJoystickPitch() {
   }
 
   firstMobileJoystickPitchApplied = true;
-  player.camPitchOffset = THREE.MathUtils.clamp(player.camPitchOffset - 0.12, -1.35, 1.18);
+  mobileJoystickPitchCorrection.active = true;
+  mobileJoystickPitchCorrection.elapsed = 0;
+  mobileJoystickPitchCorrection.current = 0;
+}
+
+function updateMobileJoystickPitchCorrection(delta) {
+  if (!mobileJoystickPitchCorrection.active) {
+    return;
+  }
+
+  mobileJoystickPitchCorrection.elapsed = Math.min(
+    mobileJoystickPitchCorrection.elapsed + delta,
+    mobileJoystickPitchCorrection.duration
+  );
+  const t = mobileJoystickPitchCorrection.elapsed / mobileJoystickPitchCorrection.duration;
+  const eased = t * t * (3 - 2 * t);
+  const nextCorrection = mobileJoystickPitchCorrection.target * eased;
+  const correctionDelta = nextCorrection - mobileJoystickPitchCorrection.current;
+  mobileJoystickPitchCorrection.current = nextCorrection;
+  player.camPitchOffset = THREE.MathUtils.clamp(player.camPitchOffset + correctionDelta, -1.35, 1.18);
+
+  if (t >= 1) {
+    mobileJoystickPitchCorrection.active = false;
+  }
 }
 
 function handleTouchStart(event) {
@@ -3768,6 +3798,7 @@ function animate() {
   const delta = Math.min(rawDelta, 0.05);
   updateDynamicResolution(rawDelta);
   updateFpsMeter(rawDelta);
+  updateMobileJoystickPitchCorrection(delta);
   updatePhysics(delta);
   updateTerrain();
   updateDistantGrass();
