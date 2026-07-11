@@ -277,6 +277,7 @@ let pendingCarQualityLevel = 0;
 let carModelRequestId = 0;
 let carSpeed = 0;
 const CAR_PERFORMANCE_MULTIPLIER = 1.5;
+const NITRO_MULTIPLIER = 1.7;
 const carMaxSpeed = 65 * CAR_PERFORMANCE_MULTIPLIER;
 const carAcceleration = 42 * CAR_PERFORMANCE_MULTIPLIER;
 let brakeLightMaterials = [];
@@ -306,6 +307,7 @@ camera.rotation.set(player.pitch, player.yaw, 0);
 
 const keys = new Set();
 let startupHandbrakeActive = true;
+let firstMobileJoystickPitchApplied = false;
 const clock = new THREE.Clock();
 const forward = new THREE.Vector3();
 const right = new THREE.Vector3();
@@ -498,6 +500,8 @@ const CAR_RAW_FRONT_Z = 349.9110870361328;
 const CAR_RAW_REAR_Z = 86.52527523040771;
 const CAR_RAW_WHEEL_Y = 31.578731536865234;
 const CAR_RAW_WHEEL_RADIUS = 32.0511;
+const STATIC_WHEEL_CULL_RADIUS = CAR_RAW_WHEEL_RADIUS * 1.08;
+const STATIC_WHEEL_CULL_HALF_WIDTH = 24;
 // The model is authored +Z-forward and is rotated 180 degrees into -Z-forward.
 const TRUCK_FRONT_Z = -(CAR_RAW_FRONT_Z - CAR_RAW_CENTER_Z) * CAR_SCALE;
 const TRUCK_REAR_Z = -(CAR_RAW_REAR_Z - CAR_RAW_CENTER_Z) * CAR_SCALE;
@@ -603,6 +607,7 @@ const CAR_WHEEL_STEER_MATERIALS = new Set(["brake__spec_2", "Matte__FF191919"]);
 const REAR_BRAKE_LIGHT_MATERIALS = new Set(["zenki__env_9_sp", "Color_K02"]);
 const REAR_LAMP_CENTER_MATERIALS = new Set(["Color_B03"]);
 const REAR_FLOATING_LAMP_MESHES = new Set(["RearLampOuterAmberRight", "RearLampOuterAmberLeft"]);
+const STATIC_WHEEL_OVERLAP_MATERIALS = new Set(["Color_B07g334g34g34"]);
 const CAR_WHEEL_RAW_CENTERS = [
   new THREE.Vector3(CAR_RAW_RIGHT_X, CAR_RAW_WHEEL_Y, CAR_RAW_REAR_Z),
   new THREE.Vector3(CAR_RAW_LEFT_X, CAR_RAW_WHEEL_Y, CAR_RAW_REAR_Z),
@@ -670,6 +675,73 @@ function splitCombinedWheelMesh(sourceMesh) {
   });
   sourceGeometry.dispose();
   return parts;
+}
+
+function removeStaticWheelOverlapGeometry(mesh) {
+  const sourceGeometry = mesh.geometry.index
+    ? mesh.geometry.toNonIndexed()
+    : mesh.geometry.clone();
+  const position = sourceGeometry.attributes.position;
+  const triangleCenter = new THREE.Vector3();
+  const worldPosition = new THREE.Vector3();
+  const keptAttributes = {};
+  let removedTriangles = 0;
+
+  Object.entries(sourceGeometry.attributes).forEach(([name]) => {
+    keptAttributes[name] = [];
+  });
+
+  for (let triangle = 0; triangle < position.count; triangle += 3) {
+    triangleCenter.set(0, 0, 0);
+    for (let vertex = 0; vertex < 3; vertex += 1) {
+      worldPosition
+        .fromBufferAttribute(position, triangle + vertex)
+        .applyMatrix4(mesh.matrixWorld);
+      triangleCenter.add(worldPosition);
+    }
+    triangleCenter.multiplyScalar(1 / 3);
+
+    const insideStaticWheel = CAR_WHEEL_RAW_CENTERS.some((wheelCenter) => {
+      const axleDistance = Math.abs(triangleCenter.x - wheelCenter.x);
+      const radialDistance = Math.hypot(
+        triangleCenter.y - wheelCenter.y,
+        triangleCenter.z - wheelCenter.z
+      );
+      return axleDistance < STATIC_WHEEL_CULL_HALF_WIDTH && radialDistance < STATIC_WHEEL_CULL_RADIUS;
+    });
+
+    if (insideStaticWheel) {
+      removedTriangles += 1;
+      continue;
+    }
+
+    Object.entries(sourceGeometry.attributes).forEach(([name, attribute]) => {
+      for (let vertex = 0; vertex < 3; vertex += 1) {
+        const index = triangle + vertex;
+        for (let component = 0; component < attribute.itemSize; component += 1) {
+          keptAttributes[name].push(attribute.array[index * attribute.itemSize + component]);
+        }
+      }
+    });
+  }
+
+  if (removedTriangles === 0) {
+    sourceGeometry.dispose();
+    return;
+  }
+
+  const cleanedGeometry = new THREE.BufferGeometry();
+  Object.entries(sourceGeometry.attributes).forEach(([name, attribute]) => {
+    cleanedGeometry.setAttribute(
+      name,
+      new THREE.Float32BufferAttribute(keptAttributes[name], attribute.itemSize, attribute.normalized)
+    );
+  });
+  cleanedGeometry.computeBoundingBox();
+  cleanedGeometry.computeBoundingSphere();
+  mesh.geometry.dispose();
+  mesh.geometry = cleanedGeometry;
+  sourceGeometry.dispose();
 }
 
 function attachCarModel(carModel) {
@@ -756,6 +828,11 @@ function attachCarModel(carModel) {
     sourceMesh.parent?.remove(sourceMesh);
     sourceMesh.geometry.dispose();
   });
+  carModel.traverse((child) => {
+    if (!child.isMesh || wheelSourceMeshes.includes(child)) return;
+    if (!STATIC_WHEEL_OVERLAP_MATERIALS.has(child.material?.name || "")) return;
+    removeStaticWheelOverlapGeometry(child);
+  });
 
   const content = new THREE.Group();
   content.name = "LevinContent";
@@ -770,7 +847,7 @@ function attachCarModel(carModel) {
     steerPivot.position.copy(wheelCenter);
     steerPivot.add(spinPivot);
     wheelParts[region].spin.forEach((part) => spinPivot.add(part));
-    wheelParts[region].steer.forEach((part) => spinPivot.add(part));
+    wheelParts[region].steer.forEach((part) => steerPivot.add(part));
     steerPivot.userData.authoredWheel = true;
     steerPivot.userData.basePosition = steerPivot.position.clone();
     steerPivot.userData.spinPivot = spinPivot;
@@ -2877,6 +2954,15 @@ function look(deltaX, deltaY) {
   player.camPitchOffset = THREE.MathUtils.clamp(player.camPitchOffset, -1.35, 1.18);
 }
 
+function applyFirstMobileJoystickPitch() {
+  if (firstMobileJoystickPitchApplied || !isTouchFirstDevice()) {
+    return;
+  }
+
+  firstMobileJoystickPitchApplied = true;
+  player.camPitchOffset = THREE.MathUtils.clamp(player.camPitchOffset - 0.12, -1.35, 1.18);
+}
+
 function handleTouchStart(event) {
   event.preventDefault();
   document.body.classList.add("scene-started");
@@ -2907,6 +2993,10 @@ function handleTouchMove(event) {
         .sub(touch.moveStart)
         .divideScalar(86)
         .clampScalar(-1, 1);
+
+      if (touch.moveVector.lengthSq() > 0.0064) {
+        applyFirstMobileJoystickPitch();
+      }
     }
 
     if (changedTouch.identifier === touch.lookId) {
@@ -2973,6 +3063,7 @@ function readVehicleInput() {
   let forwardInput = -touch.moveVector.y;
   let sideInput = -touch.moveVector.x;
   const explicitHandbrake = keys.has("Space") || keys.has(" ");
+  const nitro = keys.has("ShiftLeft") || keys.has("ShiftRight");
 
   if (keys.has("KeyW") || keys.has("ArrowUp")) forwardInput += 1;
   if (keys.has("KeyS") || keys.has("ArrowDown")) forwardInput -= 1;
@@ -2989,6 +3080,7 @@ function readVehicleInput() {
   return {
     forwardInput,
     sideInput,
+    nitro,
     handbrake: explicitHandbrake || startupHandbrakeActive
   };
 }
@@ -3013,11 +3105,12 @@ function stepVehiclePhysics(vehicleInput, fixedDelta) {
     const isBraking = brakingForReverse || brakingForForward;
     const torque = getEngineTorque(Math.abs(forwardSpeed));
     const shiftCut = transmission.shiftTimer > 0 ? 0.12 : 1;
+    const nitroMultiplier = vehicleInput.nitro && vehicleInput.forwardInput > 0.04 ? NITRO_MULTIPLIER : 1;
     let engineForce = 0;
 
     if (!isBraking && !vehicleInput.handbrake) {
       if (physicsThrottle > 0.02) {
-        engineForce = -physicsThrottle * 6400 * CAR_PERFORMANCE_MULTIPLIER * TRANSMISSION_GEARS[transmission.gear].driveMultiplier * torque * shiftCut;
+        engineForce = -physicsThrottle * 6400 * CAR_PERFORMANCE_MULTIPLIER * nitroMultiplier * TRANSMISSION_GEARS[transmission.gear].driveMultiplier * torque * shiftCut;
       } else if (physicsThrottle < -0.02 && Math.abs(forwardSpeed) < 7.5) {
         // Reverse is deliberately shorter and gentler than first gear.
         engineForce = -physicsThrottle * 3300 * CAR_PERFORMANCE_MULTIPLIER * torque;
@@ -3031,7 +3124,8 @@ function stepVehiclePhysics(vehicleInput, fixedDelta) {
     // handbrake, so it gets the only aggressive brake force.
     const serviceBrake = isBraking ? 285 : engineBraking;
     const rearHandbrake = vehicleInput.handbrake ? 5600 : 0;
-    const steeringLimit = 0.42 * (1 - THREE.MathUtils.clamp(Math.abs(forwardSpeed) / carMaxSpeed, 0, 1) * 0.52);
+    const maxForwardSpeed = carMaxSpeed * nitroMultiplier;
+    const steeringLimit = 0.42 * (1 - THREE.MathUtils.clamp(Math.abs(forwardSpeed) / maxForwardSpeed, 0, 1) * 0.52);
     const steering = vehicleInput.sideInput * steeringLimit;
 
     updateBrakeLights(vehicleInput.handbrake || isBraking);
@@ -3174,7 +3268,7 @@ function syncVehicleFromPhysics(delta, vehicleInput) {
     const truckForward = new THREE.Vector3(0, 0, -1).applyQuaternion(carGroup.quaternion);
     const localForwardSpeed = player.velocity.dot(truckForward);
     const throttleSpin = physicsThrottle * 9.5;
-    const visualSpinVelocity = -(localForwardSpeed / TRUCK_WHEEL_RADIUS) + throttleSpin;
+    const visualSpinVelocity = (localForwardSpeed / TRUCK_WHEEL_RADIUS) + throttleSpin;
 
     for (let i = 0; i < 4; i++) {
       const visualWheel = visualWheels[i];
@@ -3229,7 +3323,8 @@ function updateFallbackCar(delta) {
 
   if (!brakingForReverse && !brakingForForward) {
     const driveInput = forwardInput >= 0 ? forwardInput : forwardInput * 0.5;
-    carSpeed += driveInput * carAcceleration * gearDrive * torque * shiftCut * delta;
+    const nitroMultiplier = vehicleInput.nitro && driveInput > 0.04 ? NITRO_MULTIPLIER : 1;
+    carSpeed += driveInput * carAcceleration * nitroMultiplier * gearDrive * torque * shiftCut * delta;
   }
   
   if (handbrake) {
@@ -3244,8 +3339,9 @@ function updateFallbackCar(delta) {
     carSpeed *= Math.pow(carFriction, delta * 60);
   }
   
-  carSpeed = THREE.MathUtils.clamp(carSpeed, -carMaxSpeed * 0.42, carMaxSpeed);
-  const steeringScale = 1 - THREE.MathUtils.clamp(Math.abs(carSpeed) / carMaxSpeed, 0, 1) * 0.48;
+  const maxForwardSpeed = carMaxSpeed * (vehicleInput.nitro && carSpeed > 0 ? NITRO_MULTIPLIER : 1);
+  carSpeed = THREE.MathUtils.clamp(carSpeed, -carMaxSpeed * 0.42, maxForwardSpeed);
+  const steeringScale = 1 - THREE.MathUtils.clamp(Math.abs(carSpeed) / maxForwardSpeed, 0, 1) * 0.48;
   carSteering += (sideInput * carMaxSteering * steeringScale - carSteering) * Math.min(1, delta * 8);
 
   updateBrakeLights(handbrake || brakingForReverse || brakingForForward);
@@ -3265,7 +3361,7 @@ function updateFallbackCar(delta) {
     const steering = index < 2 ? carSteering * 18 : 0;
     if (wheel.userData.authoredWheel) {
       wheel.rotation.set(0, steering, 0);
-      wheel.userData.spin = (wheel.userData.spin || 0) - (carSpeed / TRUCK_WHEEL_RADIUS) * delta;
+      wheel.userData.spin = (wheel.userData.spin || 0) + (carSpeed / TRUCK_WHEEL_RADIUS) * delta;
       wheel.userData.spinPivot.rotation.x = wheel.userData.spin;
     } else {
       wheel.rotation.set(clock.elapsedTime * carSpeed * 0.95, steering + (wheel.userData.baseYaw || 0), 0, "YXZ");
