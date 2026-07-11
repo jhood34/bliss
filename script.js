@@ -305,6 +305,7 @@ camera.position.copy(player.position);
 camera.rotation.set(player.pitch, player.yaw, 0);
 
 const keys = new Set();
+let startupHandbrakeActive = true;
 const clock = new THREE.Clock();
 const forward = new THREE.Vector3();
 const right = new THREE.Vector3();
@@ -601,6 +602,7 @@ const CAR_WHEEL_SPIN_MATERIALS = new Set(["advan_neova1", "default_grey__s1", "d
 const CAR_WHEEL_STEER_MATERIALS = new Set(["brake__spec_2", "Matte__FF191919"]);
 const REAR_BRAKE_LIGHT_MATERIALS = new Set(["zenki__env_9_sp", "Color_K02"]);
 const REAR_LAMP_CENTER_MATERIALS = new Set(["Color_B03"]);
+const REAR_FLOATING_LAMP_MESHES = new Set(["RearLampOuterAmberRight", "RearLampOuterAmberLeft"]);
 const CAR_WHEEL_RAW_CENTERS = [
   new THREE.Vector3(CAR_RAW_RIGHT_X, CAR_RAW_WHEEL_Y, CAR_RAW_REAR_Z),
   new THREE.Vector3(CAR_RAW_LEFT_X, CAR_RAW_WHEEL_Y, CAR_RAW_REAR_Z),
@@ -675,6 +677,7 @@ function attachCarModel(carModel) {
   carModel.updateMatrixWorld(true);
   const wheelSourceMeshes = [];
   const edgeOverlayMeshes = [];
+  const floatingLampMeshes = [];
   const rearLampCenterMeshes = [];
   let rearBrakeLensMaterial = null;
   carModel.traverse((child) => {
@@ -682,6 +685,10 @@ function attachCarModel(carModel) {
     child.castShadow = true;
     child.receiveShadow = true;
     const materialName = child.material?.name || "";
+    if (REAR_FLOATING_LAMP_MESHES.has(child.name)) {
+      floatingLampMeshes.push(child);
+      return;
+    }
     if (materialName.startsWith("edge_color")) {
       edgeOverlayMeshes.push(child);
       return;
@@ -701,6 +708,15 @@ function attachCarModel(carModel) {
       wheelSourceMeshes.push(child);
     }
   });
+
+  const removedMaterials = new Set();
+  floatingLampMeshes.forEach((mesh) => {
+    mesh.parent?.remove(mesh);
+    mesh.geometry.dispose();
+    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    materials.forEach((material) => { if (material) removedMaterials.add(material); });
+  });
+  removedMaterials.forEach((material) => material.dispose());
 
   const edgeMaterials = new Set();
   edgeOverlayMeshes.forEach((mesh) => {
@@ -2956,15 +2972,25 @@ function updatePhysics(delta) {
 function readVehicleInput() {
   let forwardInput = -touch.moveVector.y;
   let sideInput = -touch.moveVector.x;
-  let handbrake = false;
+  const explicitHandbrake = keys.has("Space") || keys.has(" ");
 
   if (keys.has("KeyW") || keys.has("ArrowUp")) forwardInput += 1;
   if (keys.has("KeyS") || keys.has("ArrowDown")) forwardInput -= 1;
   if (keys.has("KeyA") || keys.has("ArrowLeft")) sideInput += 1;
   if (keys.has("KeyD") || keys.has("ArrowRight")) sideInput -= 1;
-  if (keys.has("Space") || keys.has(" ")) handbrake = true;
 
-  return { forwardInput, sideInput, handbrake };
+  if (
+    startupHandbrakeActive
+    && (Math.abs(forwardInput) > 0.001 || Math.abs(sideInput) > 0.001 || explicitHandbrake)
+  ) {
+    startupHandbrakeActive = false;
+  }
+
+  return {
+    forwardInput,
+    sideInput,
+    handbrake: explicitHandbrake || startupHandbrakeActive
+  };
 }
 
 function stepVehiclePhysics(vehicleInput, fixedDelta) {
@@ -3186,14 +3212,8 @@ function updateFallbackCar(delta) {
     return;
   }
 
-  let forwardInput = -touch.moveVector.y;
-  let sideInput = -touch.moveVector.x;
-  let handbrake = keys.has("Space") || keys.has(" ");
-
-  if (keys.has("KeyW") || keys.has("ArrowUp")) forwardInput += 1;
-  if (keys.has("KeyS") || keys.has("ArrowDown")) forwardInput -= 1;
-  if (keys.has("KeyA") || keys.has("ArrowLeft")) sideInput += 1;
-  if (keys.has("KeyD") || keys.has("ArrowRight")) sideInput -= 1;
+  const vehicleInput = readVehicleInput();
+  const { forwardInput, sideInput, handbrake } = vehicleInput;
 
   updateTransmission(Math.abs(carSpeed), forwardInput, delta);
   const shiftJolt = transmission.shiftJolt;
