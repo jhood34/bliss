@@ -20,6 +20,7 @@ const bgm = document.querySelector("#bgm");
 const volumeBtn = document.querySelector("#volume-btn");
 const volumeIcon = document.querySelector("#volume-icon");
 const settingsBtn = document.querySelector("#settings-btn");
+const autoDriveBtn = document.querySelector("#auto-drive-btn");
 const tuningPanel = document.querySelector("#tuning-panel");
 const fpsMeter = document.querySelector("#fps-meter");
 const fpsValue = document.querySelector("#fps-value");
@@ -307,14 +308,44 @@ camera.rotation.set(player.pitch, player.yaw, 0);
 
 const keys = new Set();
 let startupHandbrakeActive = true;
-let firstMobileJoystickPitchApplied = false;
-const mobileJoystickPitchCorrection = {
+let drivingCameraPitchApplied = false;
+const drivingCameraPitchCorrection = {
   active: false,
   elapsed: 0,
   duration: 0.9,
   current: 0,
   target: -0.065
 };
+const AUTO_DRIVE_CAMERA_ENTRY_SECONDS = 1.8;
+const AUTO_DRIVE_CAMERA_KEYFRAME_SECONDS = 30;
+const NEAR_GRASS_HEIGHT_PER_MULTIPLIER = 2.8;
+const CAMERA_GRASS_MARGIN = 0.45;
+const AUTO_DRIVE_CAMERA_KEYFRAMES = [
+  { yawOffset: -1.638, pitchOffset: 0.1323, distance: 15.897, fov: 54.593 },
+  { yawOffset: -3.7086, pitchOffset: 0.0567, distance: 15.897, fov: 54.593 },
+  { yawOffset: -5.5293, pitchOffset: -0.0021, distance: 15.897, fov: 54.593 }
+];
+const autoDriveCamera = {
+  active: false,
+  elapsed: 0,
+  duration: AUTO_DRIVE_CAMERA_ENTRY_SECONDS,
+  fromIndex: -1,
+  toIndex: 0,
+  from: null,
+  to: null
+};
+const autoDrive = {
+  active: false,
+  forwardInput: 0,
+  position: player.position,
+  get speed() {
+    return Math.hypot(player.velocity.x, player.velocity.z);
+  },
+  get cameraPitchOffset() {
+    return player.camPitchOffset;
+  }
+};
+window.blissAutoDrive = autoDrive;
 const clock = new THREE.Clock();
 const forward = new THREE.Vector3();
 const right = new THREE.Vector3();
@@ -428,8 +459,104 @@ async function startScene() {
   initializeQualityControl();
   initializeVolumeControl();
   initializeSettingsBtn();
+  initializeAutoDrive();
 
   animate();
+}
+
+function initializeAutoDrive() {
+  if (!autoDriveBtn) {
+    return;
+  }
+
+  autoDriveBtn.addEventListener("click", (event) => {
+    event.stopPropagation();
+    setAutoDriveActive(!autoDrive.active);
+  });
+}
+
+function setAutoDriveActive(isActive) {
+  autoDrive.active = isActive;
+  autoDriveBtn?.setAttribute("aria-pressed", String(isActive));
+  autoDriveBtn?.setAttribute("aria-label", isActive ? "Disable auto drive" : "Enable auto drive");
+
+  if (isActive) {
+    document.body.classList.add("scene-started");
+    startBgm();
+    startAutoDriveCameraSequence();
+  } else {
+    autoDriveCamera.active = false;
+    delete document.body.dataset.autoDriveCamera;
+  }
+}
+
+function startAutoDriveCameraSequence() {
+  drivingCameraPitchCorrection.active = false;
+  autoDriveCamera.active = true;
+  autoDriveCamera.elapsed = 0;
+  autoDriveCamera.duration = AUTO_DRIVE_CAMERA_ENTRY_SECONDS;
+  autoDriveCamera.fromIndex = -1;
+  autoDriveCamera.toIndex = 0;
+  autoDriveCamera.from = captureCameraViewSettings();
+  autoDriveCamera.to = resolveCameraViewYaw(AUTO_DRIVE_CAMERA_KEYFRAMES[0], autoDriveCamera.from.yawOffset);
+  document.body.dataset.autoDriveCamera = "entry-0";
+}
+
+function beginAutoDriveCameraSegment(fromIndex, toIndex) {
+  autoDriveCamera.elapsed = 0;
+  autoDriveCamera.duration = AUTO_DRIVE_CAMERA_KEYFRAME_SECONDS;
+  autoDriveCamera.fromIndex = fromIndex;
+  autoDriveCamera.toIndex = toIndex;
+  autoDriveCamera.from = captureCameraViewSettings();
+  autoDriveCamera.to = resolveCameraViewYaw(AUTO_DRIVE_CAMERA_KEYFRAMES[toIndex], autoDriveCamera.from.yawOffset);
+  document.body.dataset.autoDriveCamera = `${fromIndex}-${toIndex}`;
+}
+
+function captureCameraViewSettings() {
+  return {
+    yawOffset: player.camYawOffset,
+    pitchOffset: player.camPitchOffset,
+    distance: cameraZoom.distance,
+    fov: cameraZoom.fov
+  };
+}
+
+function resolveCameraViewYaw(view, currentYaw) {
+  const fullTurns = Math.round((currentYaw - view.yawOffset) / (Math.PI * 2));
+  return {
+    ...view,
+    yawOffset: view.yawOffset + fullTurns * Math.PI * 2
+  };
+}
+
+function updateAutoDriveCamera(delta) {
+  if (!autoDriveCamera.active || !autoDriveCamera.from || !autoDriveCamera.to) {
+    return;
+  }
+
+  autoDriveCamera.elapsed = Math.min(autoDriveCamera.elapsed + delta, autoDriveCamera.duration);
+  const linearProgress = autoDriveCamera.elapsed / autoDriveCamera.duration;
+  const easedProgress = linearProgress * linearProgress * linearProgress
+    * (linearProgress * (linearProgress * 6 - 15) + 10);
+
+  player.camYawOffset = THREE.MathUtils.lerp(autoDriveCamera.from.yawOffset, autoDriveCamera.to.yawOffset, easedProgress);
+  player.camPitchOffset = THREE.MathUtils.lerp(autoDriveCamera.from.pitchOffset, autoDriveCamera.to.pitchOffset, easedProgress);
+  cameraZoom.distance = THREE.MathUtils.lerp(autoDriveCamera.from.distance, autoDriveCamera.to.distance, easedProgress);
+  cameraZoom.targetDistance = cameraZoom.distance;
+  cameraZoom.fov = THREE.MathUtils.lerp(autoDriveCamera.from.fov, autoDriveCamera.to.fov, easedProgress);
+  cameraZoom.targetFov = cameraZoom.fov;
+
+  if (linearProgress < 1) {
+    return;
+  }
+
+  const completedIndex = autoDriveCamera.toIndex;
+  const nextIndex = (completedIndex + 1) % AUTO_DRIVE_CAMERA_KEYFRAMES.length;
+  beginAutoDriveCameraSegment(completedIndex, nextIndex);
+}
+
+function getMinimumCameraGrassClearance() {
+  return sceneSettings.grassHeight * NEAR_GRASS_HEIGHT_PER_MULTIPLIER + CAMERA_GRASS_MARGIN;
 }
 
 function initializeSettingsBtn() {
@@ -2433,6 +2560,10 @@ function updateGrassLayerVisibility() {
   // JSON string every frame. Keep the DOM diagnostic at a human-readable rate.
   if (clock.elapsedTime - lastGrassStatsDomPublishTime >= 0.5) {
     document.body.dataset.grassStats = JSON.stringify(grassStats);
+    document.body.dataset.cameraClearance = (
+      camera.position.y - terrainHeight(camera.position.x, camera.position.z)
+    ).toFixed(3);
+    document.body.dataset.cameraMinimumClearance = getMinimumCameraGrassClearance().toFixed(3);
     lastGrassStatsDomPublishTime = clock.elapsedTime;
   }
 }
@@ -2961,35 +3092,35 @@ function look(deltaX, deltaY) {
   player.camPitchOffset = THREE.MathUtils.clamp(player.camPitchOffset, -1.35, 1.18);
 }
 
-function applyFirstMobileJoystickPitch() {
-  if (firstMobileJoystickPitchApplied || !isTouchFirstDevice()) {
+function applyDrivingCameraPitch() {
+  if (drivingCameraPitchApplied) {
     return;
   }
 
-  firstMobileJoystickPitchApplied = true;
-  mobileJoystickPitchCorrection.active = true;
-  mobileJoystickPitchCorrection.elapsed = 0;
-  mobileJoystickPitchCorrection.current = 0;
+  drivingCameraPitchApplied = true;
+  drivingCameraPitchCorrection.active = true;
+  drivingCameraPitchCorrection.elapsed = 0;
+  drivingCameraPitchCorrection.current = 0;
 }
 
-function updateMobileJoystickPitchCorrection(delta) {
-  if (!mobileJoystickPitchCorrection.active) {
+function updateDrivingCameraPitchCorrection(delta) {
+  if (!drivingCameraPitchCorrection.active) {
     return;
   }
 
-  mobileJoystickPitchCorrection.elapsed = Math.min(
-    mobileJoystickPitchCorrection.elapsed + delta,
-    mobileJoystickPitchCorrection.duration
+  drivingCameraPitchCorrection.elapsed = Math.min(
+    drivingCameraPitchCorrection.elapsed + delta,
+    drivingCameraPitchCorrection.duration
   );
-  const t = mobileJoystickPitchCorrection.elapsed / mobileJoystickPitchCorrection.duration;
+  const t = drivingCameraPitchCorrection.elapsed / drivingCameraPitchCorrection.duration;
   const eased = t * t * (3 - 2 * t);
-  const nextCorrection = mobileJoystickPitchCorrection.target * eased;
-  const correctionDelta = nextCorrection - mobileJoystickPitchCorrection.current;
-  mobileJoystickPitchCorrection.current = nextCorrection;
+  const nextCorrection = drivingCameraPitchCorrection.target * eased;
+  const correctionDelta = nextCorrection - drivingCameraPitchCorrection.current;
+  drivingCameraPitchCorrection.current = nextCorrection;
   player.camPitchOffset = THREE.MathUtils.clamp(player.camPitchOffset + correctionDelta, -1.35, 1.18);
 
   if (t >= 1) {
-    mobileJoystickPitchCorrection.active = false;
+    drivingCameraPitchCorrection.active = false;
   }
 }
 
@@ -3025,7 +3156,7 @@ function handleTouchMove(event) {
         .clampScalar(-1, 1);
 
       if (touch.moveVector.lengthSq() > 0.0064) {
-        applyFirstMobileJoystickPitch();
+        applyDrivingCameraPitch();
       }
     }
 
@@ -3099,6 +3230,11 @@ function readVehicleInput() {
   if (keys.has("KeyS") || keys.has("ArrowDown")) forwardInput -= 1;
   if (keys.has("KeyA") || keys.has("ArrowLeft")) sideInput += 1;
   if (keys.has("KeyD") || keys.has("ArrowRight")) sideInput -= 1;
+
+  if (autoDrive.active) {
+    forwardInput = Math.max(1, forwardInput);
+  }
+  autoDrive.forwardInput = forwardInput;
 
   if (
     startupHandbrakeActive
@@ -3480,7 +3616,11 @@ function updateChaseCamera(delta) {
     carCenter.z + Math.cos(orbitYaw) * horizontalDistance
   );
 
-  const minCameraY = terrainHeight(cameraDesiredPosition.x, cameraDesiredPosition.z) + 0.5;
+  // Nearby procedural blades can reach roughly 2.8 world units per height
+  // multiplier. Keep the lens above their tips, even when the orbit crosses a
+  // steeper patch of terrain.
+  const grassTopClearance = getMinimumCameraGrassClearance();
+  const minCameraY = terrainHeight(cameraDesiredPosition.x, cameraDesiredPosition.z) + grassTopClearance;
   if (cameraDesiredPosition.y < minCameraY) {
     cameraDesiredPosition.y = minCameraY;
   }
@@ -3493,6 +3633,9 @@ function updateChaseCamera(delta) {
     camera.position.lerp(cameraDesiredPosition, positionBlend);
     cameraFollow.target.lerp(cameraDesiredTarget, targetBlend);
   }
+
+  const actualMinCameraY = terrainHeight(camera.position.x, camera.position.z) + grassTopClearance;
+  camera.position.y = Math.max(camera.position.y, actualMinCameraY);
 
   camera.lookAt(cameraFollow.target);
 }
@@ -3798,7 +3941,8 @@ function animate() {
   const delta = Math.min(rawDelta, 0.05);
   updateDynamicResolution(rawDelta);
   updateFpsMeter(rawDelta);
-  updateMobileJoystickPitchCorrection(delta);
+  updateDrivingCameraPitchCorrection(delta);
+  updateAutoDriveCamera(rawDelta);
   updatePhysics(delta);
   updateTerrain();
   updateDistantGrass();
