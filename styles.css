@@ -735,6 +735,22 @@ body.scene-started .wallpaper-screen {
   align-items: flex-end;
 }
 
+.bottom-left-controls,
+.bottom-right-controls,
+.fps-meter,
+.mobile-controls {
+  transition: opacity 420ms ease;
+}
+
+body.auto-drive-ui-idle .bottom-left-controls,
+body.auto-drive-ui-idle .bottom-right-controls,
+body.auto-drive-ui-idle .tuning-panel,
+body.auto-drive-ui-idle .fps-meter,
+body.auto-drive-ui-idle .mobile-controls {
+  opacity: 0;
+  pointer-events: none;
+}
+
 .footer-text {
   color: rgba(255, 255, 255, 0.48);
   font-size: 12px;
@@ -840,6 +856,33 @@ body.scene-started .wallpaper-screen {
 
 .auto-drive-btn[aria-pressed="true"] .auto-drive-icon::after {
   right: 2px;
+}
+
+.fullscreen-icon {
+  display: block;
+  width: 16px;
+  height: 16px;
+  background:
+    linear-gradient(currentColor 0 0) left top / 6px 1.5px no-repeat,
+    linear-gradient(currentColor 0 0) left top / 1.5px 6px no-repeat,
+    linear-gradient(currentColor 0 0) right top / 6px 1.5px no-repeat,
+    linear-gradient(currentColor 0 0) right top / 1.5px 6px no-repeat,
+    linear-gradient(currentColor 0 0) right bottom / 6px 1.5px no-repeat,
+    linear-gradient(currentColor 0 0) right bottom / 1.5px 6px no-repeat,
+    linear-gradient(currentColor 0 0) left bottom / 6px 1.5px no-repeat,
+    linear-gradient(currentColor 0 0) left bottom / 1.5px 6px no-repeat;
+}
+
+.fullscreen-btn[aria-pressed="true"] .fullscreen-icon {
+  background:
+    linear-gradient(currentColor 0 0) left 1px top 6px / 6px 1.5px no-repeat,
+    linear-gradient(currentColor 0 0) left 6px top 1px / 1.5px 6px no-repeat,
+    linear-gradient(currentColor 0 0) right 1px top 6px / 6px 1.5px no-repeat,
+    linear-gradient(currentColor 0 0) right 6px top 1px / 1.5px 6px no-repeat,
+    linear-gradient(currentColor 0 0) right 1px bottom 6px / 6px 1.5px no-repeat,
+    linear-gradient(currentColor 0 0) right 6px bottom 1px / 1.5px 6px no-repeat,
+    linear-gradient(currentColor 0 0) left 1px bottom 6px / 6px 1.5px no-repeat,
+    linear-gradient(currentColor 0 0) left 6px bottom 1px / 1.5px 6px no-repeat;
 }
 
 .attribution-popup a {

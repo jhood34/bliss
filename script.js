@@ -21,6 +21,8 @@ const volumeBtn = document.querySelector("#volume-btn");
 const volumeIcon = document.querySelector("#volume-icon");
 const settingsBtn = document.querySelector("#settings-btn");
 const autoDriveBtn = document.querySelector("#auto-drive-btn");
+const fullscreenBtn = document.querySelector("#fullscreen-btn");
+const fullscreenTarget = document.querySelector("#app");
 const tuningPanel = document.querySelector("#tuning-panel");
 const fpsMeter = document.querySelector("#fps-meter");
 const fpsValue = document.querySelector("#fps-value");
@@ -316,8 +318,9 @@ const drivingCameraPitchCorrection = {
   current: 0,
   target: -0.065
 };
-const AUTO_DRIVE_CAMERA_ENTRY_SECONDS = 1.8;
+const AUTO_DRIVE_CAMERA_INITIAL_HOLD_SECONDS = 30;
 const AUTO_DRIVE_CAMERA_KEYFRAME_SECONDS = 30;
+const AUTO_DRIVE_UI_IDLE_MS = 3000;
 const NEAR_GRASS_HEIGHT_PER_MULTIPLIER = 2.8;
 const CAMERA_GRASS_MARGIN = 0.45;
 const AUTO_DRIVE_CAMERA_KEYFRAMES = [
@@ -327,9 +330,10 @@ const AUTO_DRIVE_CAMERA_KEYFRAMES = [
 ];
 const autoDriveCamera = {
   active: false,
+  phase: "hold",
   elapsed: 0,
-  duration: AUTO_DRIVE_CAMERA_ENTRY_SECONDS,
-  fromIndex: -1,
+  duration: AUTO_DRIVE_CAMERA_INITIAL_HOLD_SECONDS,
+  fromIndex: 0,
   toIndex: 0,
   from: null,
   to: null
@@ -346,6 +350,7 @@ const autoDrive = {
   }
 };
 window.blissAutoDrive = autoDrive;
+let autoDriveUiIdleTimer = null;
 const clock = new THREE.Clock();
 const forward = new THREE.Vector3();
 const right = new THREE.Vector3();
@@ -361,6 +366,12 @@ const cameraZoom = {
   targetDistance: initialCameraDistance,
   fov: 54.593,
   targetFov: 54.593
+};
+const autoDriveSpawnCameraView = {
+  yawOffset: player.camYawOffset,
+  pitchOffset: player.camPitchOffset,
+  distance: cameraZoom.distance,
+  fov: cameraZoom.fov
 };
 const cameraDesiredPosition = new THREE.Vector3();
 const cameraDesiredTarget = new THREE.Vector3();
@@ -460,8 +471,67 @@ async function startScene() {
   initializeVolumeControl();
   initializeSettingsBtn();
   initializeAutoDrive();
+  initializeFullscreen();
 
   animate();
+}
+
+function initializeFullscreen() {
+  if (!fullscreenBtn || !fullscreenTarget) {
+    return;
+  }
+
+  fullscreenBtn.addEventListener("click", async (event) => {
+    event.stopPropagation();
+
+    try {
+      if (getFullscreenElement()) {
+        await exitFullscreen();
+      } else {
+        await enterFullscreen(fullscreenTarget);
+      }
+    } catch {
+      syncFullscreenButton();
+    }
+  });
+
+  document.addEventListener("fullscreenchange", syncFullscreenButton);
+  document.addEventListener("webkitfullscreenchange", syncFullscreenButton);
+  syncFullscreenButton();
+}
+
+function getFullscreenElement() {
+  return document.fullscreenElement || document.webkitFullscreenElement || null;
+}
+
+function enterFullscreen(target) {
+  if (target.requestFullscreen) {
+    return target.requestFullscreen();
+  }
+
+  if (target.webkitRequestFullscreen) {
+    return target.webkitRequestFullscreen();
+  }
+
+  return Promise.reject(new Error("Fullscreen is not supported"));
+}
+
+function exitFullscreen() {
+  if (document.exitFullscreen) {
+    return document.exitFullscreen();
+  }
+
+  if (document.webkitExitFullscreen) {
+    return document.webkitExitFullscreen();
+  }
+
+  return Promise.reject(new Error("Fullscreen is not supported"));
+}
+
+function syncFullscreenButton() {
+  const isFullscreen = Boolean(getFullscreenElement());
+  fullscreenBtn?.setAttribute("aria-pressed", String(isFullscreen));
+  fullscreenBtn?.setAttribute("aria-label", isFullscreen ? "Exit full screen" : "Enter full screen");
 }
 
 function initializeAutoDrive() {
@@ -473,6 +543,7 @@ function initializeAutoDrive() {
     event.stopPropagation();
     setAutoDriveActive(!autoDrive.active);
   });
+  document.addEventListener("mousemove", handleAutoDriveMouseMovement, { passive: true });
 }
 
 function setAutoDriveActive(isActive) {
@@ -481,34 +552,63 @@ function setAutoDriveActive(isActive) {
   autoDriveBtn?.setAttribute("aria-label", isActive ? "Disable auto drive" : "Enable auto drive");
 
   if (isActive) {
-    document.body.classList.add("scene-started");
-    startBgm();
+    showAutoDriveUi();
+    scheduleAutoDriveUiFade();
+    beginSceneExperience();
     startAutoDriveCameraSequence();
   } else {
+    clearTimeout(autoDriveUiIdleTimer);
+    autoDriveUiIdleTimer = null;
+    showAutoDriveUi();
     autoDriveCamera.active = false;
     delete document.body.dataset.autoDriveCamera;
   }
 }
 
+function handleAutoDriveMouseMovement() {
+  if (!autoDrive.active) {
+    return;
+  }
+
+  showAutoDriveUi();
+  scheduleAutoDriveUiFade();
+}
+
+function showAutoDriveUi() {
+  document.body.classList.remove("auto-drive-ui-idle");
+}
+
+function scheduleAutoDriveUiFade() {
+  clearTimeout(autoDriveUiIdleTimer);
+  autoDriveUiIdleTimer = window.setTimeout(() => {
+    if (autoDrive.active) {
+      document.body.classList.add("auto-drive-ui-idle");
+    }
+  }, AUTO_DRIVE_UI_IDLE_MS);
+}
+
 function startAutoDriveCameraSequence() {
   drivingCameraPitchCorrection.active = false;
+  applyCameraViewSettings(resolveCameraViewYaw(autoDriveSpawnCameraView, player.camYawOffset));
   autoDriveCamera.active = true;
+  autoDriveCamera.phase = "hold";
   autoDriveCamera.elapsed = 0;
-  autoDriveCamera.duration = AUTO_DRIVE_CAMERA_ENTRY_SECONDS;
-  autoDriveCamera.fromIndex = -1;
+  autoDriveCamera.duration = AUTO_DRIVE_CAMERA_INITIAL_HOLD_SECONDS;
+  autoDriveCamera.fromIndex = 0;
   autoDriveCamera.toIndex = 0;
   autoDriveCamera.from = captureCameraViewSettings();
-  autoDriveCamera.to = resolveCameraViewYaw(AUTO_DRIVE_CAMERA_KEYFRAMES[0], autoDriveCamera.from.yawOffset);
-  document.body.dataset.autoDriveCamera = "entry-0";
+  autoDriveCamera.to = { ...autoDriveCamera.from };
+  document.body.dataset.autoDriveCamera = "hold-0";
 }
 
 function beginAutoDriveCameraSegment(fromIndex, toIndex) {
+  autoDriveCamera.phase = "transition";
   autoDriveCamera.elapsed = 0;
   autoDriveCamera.duration = AUTO_DRIVE_CAMERA_KEYFRAME_SECONDS;
   autoDriveCamera.fromIndex = fromIndex;
   autoDriveCamera.toIndex = toIndex;
   autoDriveCamera.from = captureCameraViewSettings();
-  autoDriveCamera.to = resolveCameraViewYaw(AUTO_DRIVE_CAMERA_KEYFRAMES[toIndex], autoDriveCamera.from.yawOffset);
+  autoDriveCamera.to = resolveCameraViewYaw(AUTO_DRIVE_CAMERA_KEYFRAMES[toIndex - 1], autoDriveCamera.from.yawOffset);
   document.body.dataset.autoDriveCamera = `${fromIndex}-${toIndex}`;
 }
 
@@ -519,6 +619,15 @@ function captureCameraViewSettings() {
     distance: cameraZoom.distance,
     fov: cameraZoom.fov
   };
+}
+
+function applyCameraViewSettings(view) {
+  player.camYawOffset = view.yawOffset;
+  player.camPitchOffset = view.pitchOffset;
+  cameraZoom.distance = view.distance;
+  cameraZoom.targetDistance = view.distance;
+  cameraZoom.fov = view.fov;
+  cameraZoom.targetFov = view.fov;
 }
 
 function resolveCameraViewYaw(view, currentYaw) {
@@ -535,6 +644,14 @@ function updateAutoDriveCamera(delta) {
   }
 
   autoDriveCamera.elapsed = Math.min(autoDriveCamera.elapsed + delta, autoDriveCamera.duration);
+
+  if (autoDriveCamera.phase === "hold") {
+    if (autoDriveCamera.elapsed >= autoDriveCamera.duration) {
+      beginAutoDriveCameraSegment(0, 1);
+    }
+    return;
+  }
+
   const linearProgress = autoDriveCamera.elapsed / autoDriveCamera.duration;
   const easedProgress = linearProgress * linearProgress * linearProgress
     * (linearProgress * (linearProgress * 6 - 15) + 10);
@@ -551,7 +668,7 @@ function updateAutoDriveCamera(delta) {
   }
 
   const completedIndex = autoDriveCamera.toIndex;
-  const nextIndex = (completedIndex + 1) % AUTO_DRIVE_CAMERA_KEYFRAMES.length;
+  const nextIndex = completedIndex >= AUTO_DRIVE_CAMERA_KEYFRAMES.length ? 1 : completedIndex + 1;
   beginAutoDriveCameraSegment(completedIndex, nextIndex);
 }
 
@@ -2994,12 +3111,7 @@ function normalizeMovementCode(event) {
 }
 
 async function lockPointer() {
-  document.body.classList.add("scene-started");
-  startBgm();
-
-  if (window.sceneStartedTime === undefined) {
-    window.sceneStartedTime = clock.elapsedTime;
-  }
+  beginSceneExperience();
 
   if (!canvas.requestPointerLock || isTouchFirstDevice()) {
     return;
@@ -3009,6 +3121,15 @@ async function lockPointer() {
     await canvas.requestPointerLock();
   } catch {
     document.body.classList.remove("is-locked");
+  }
+}
+
+function beginSceneExperience() {
+  document.body.classList.add("scene-started");
+  startBgm();
+
+  if (window.sceneStartedTime === undefined) {
+    window.sceneStartedTime = clock.elapsedTime;
   }
 }
 
@@ -3903,6 +4024,10 @@ function animateCarFade() {
   const progress = (window.sceneStartedTime !== undefined) ? Math.min(1.0, (clock.elapsedTime - window.sceneStartedTime) / 3.0) : 0.0;
   
   carVisualRoot.visible = (progress > 0.0);
+  const carVisible = String(carVisualRoot.visible);
+  if (document.body.dataset.carVisible !== carVisible) {
+    document.body.dataset.carVisible = carVisible;
+  }
 
   if (carVisualRoot.userData.lastFadeProgress === progress) return;
   carVisualRoot.userData.lastFadeProgress = progress;
