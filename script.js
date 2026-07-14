@@ -543,7 +543,8 @@ function initializeAutoDrive() {
     event.stopPropagation();
     setAutoDriveActive(!autoDrive.active);
   });
-  document.addEventListener("mousemove", handleAutoDriveMouseMovement, { passive: true });
+  document.addEventListener("mousemove", handleAutoDriveUiActivity, { passive: true });
+  document.addEventListener("touchstart", handleAutoDriveUiActivity, { capture: true, passive: true });
 }
 
 function setAutoDriveActive(isActive) {
@@ -565,7 +566,7 @@ function setAutoDriveActive(isActive) {
   }
 }
 
-function handleAutoDriveMouseMovement() {
+function handleAutoDriveUiActivity() {
   if (!autoDrive.active) {
     return;
   }
