@@ -298,126 +298,28 @@ body.ui-hidden .quality-control {
   z-index: 2;
 }
 
-/* XP Welcome Screen Styles */
-.xp-welcome-container {
+/* Entry veil — frosted glass over the scene */
+.entry-veil {
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   width: 100%;
   height: 100%;
-  background: radial-gradient(circle at 50% 50%, rgba(12, 67, 107, 0.4) 0%, rgba(3, 21, 38, 0.6) 100%);
-  backdrop-filter: blur(12px);
-  position: relative;
-  overflow: hidden;
+  background: rgba(10, 26, 40, 0.28);
+  backdrop-filter: blur(48px) saturate(140%);
+  -webkit-backdrop-filter: blur(48px) saturate(140%);
 }
 
-.xp-banner {
-  height: 15vh;
-  width: 100%;
-  background: linear-gradient(to bottom, rgba(255,255,255,0.25) 0%, rgba(255,255,255,0.05) 49%, rgba(0,0,0,0.2) 50%, rgba(0,0,0,0.5) 100%);
-  backdrop-filter: blur(15px);
-  border-top: 1px solid rgba(255,255,255,0.6);
-  border-bottom: 1px solid rgba(255,255,255,0.2);
-  box-shadow: 0 4px 20px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.8);
-}
-
-.xp-banner-top {
-}
-
-.xp-banner-bottom {
-  margin-top: auto;
-}
-
-.xp-main {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  position: relative;
-}
-
-.xp-welcome-text {
+.entry-prompt {
   font-family: "DM Sans", sans-serif;
-  font-size: clamp(3rem, 6vw, 60px);
+  font-size: clamp(1rem, 2.2vw, 1.35rem);
   font-weight: 300;
-  color: #ffffff;
-  text-shadow: 0 0 15px rgba(255, 255, 255, 0.6), 0 0 30px rgba(120, 200, 255, 0.4);
-  margin: 0;
-  letter-spacing: 2px;
-  text-align: right;
-  flex: 1;
-}
-
-.xp-login-area {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 40px;
-  width: 100%;
-  max-width: 1000px;
-  margin: 0 auto;
-}
-
-.xp-divider {
-  width: 1px;
-  height: 120px;
-  border-right: 1px solid rgba(255, 255, 255, 0.15);
-  box-shadow: 1px 0 0 rgba(0, 0, 0, 0.3);
-}
-
-.xp-login-box {
-  display: flex;
-  align-items: center;
-  gap: 20px;
-  padding: 20px 30px;
-  background: linear-gradient(to bottom, rgba(255,255,255,0.15) 0%, rgba(255,255,255,0.05) 100%);
-  border: 1px solid rgba(255,255,255,0.3);
-  border-radius: 12px;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.6);
-  backdrop-filter: blur(8px);
-  flex: 1;
-  transition: box-shadow 0.3s ease, border-color 0.3s ease, background 0.3s ease;
-  cursor: pointer;
-}
-
-.xp-login-box:hover {
-  background: linear-gradient(to bottom, rgba(255,255,255,0.25) 0%, rgba(255,255,255,0.1) 100%);
-  border-color: rgba(255, 255, 255, 0.6);
-  box-shadow: 0 8px 32px rgba(120, 200, 255, 0.4), inset 0 1px 0 rgba(255,255,255,0.8), 0 0 15px rgba(255, 255, 255, 0.3);
-}
-
-.xp-avatar {
-  width: 56px;
-  height: 56px;
-  box-sizing: border-box;
-  padding: 4px;
-  border: 2px solid rgba(255,255,255,0.6);
-  border-radius: 12px;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.8);
-  object-fit: contain;
-  background: rgba(255,255,255,0.1);
-}
-
-.xp-user-info {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  text-align: left;
-}
-
-.xp-username {
-  font-family: "DM Sans", sans-serif;
-  font-weight: normal;
-  font-size: 28px;
-  color: white;
-  margin-bottom: 4px;
-  text-shadow: 0 0 10px rgba(255, 255, 255, 0.3);
-}
-
-.xp-status {
-  font-family: "DM Sans", sans-serif;
-  font-size: 14px;
-  color: #aaddff;
-  font-weight: normal;
+  letter-spacing: 0.14em;
+  text-transform: lowercase;
+  color: rgba(255, 255, 255, 0.92);
+  text-shadow: 0 0 18px rgba(0, 0, 0, 0.35);
+  animation: pulseOpacity 2.8s infinite ease-in-out;
+  pointer-events: none;
 }
 
 .quality-control__header {
@@ -967,18 +869,6 @@ body.scene-started .mobile-controls {
   }
 }
 
-.xp-prompt-text {
-  position: absolute;
-  bottom: 80px;
-  font-family: "DM Sans", sans-serif;
-  font-size: 16px;
-  color: rgba(255, 255, 255, 0.8);
-  text-shadow: 0 0 10px rgba(0,0,0,0.5);
-  animation: pulseOpacity 2.5s infinite ease-in-out;
-  pointer-events: none;
-  display: none;
-}
-
 @keyframes pulseOpacity {
   0%, 100% { opacity: 0.3; }
   50% { opacity: 1; }
@@ -990,22 +880,5 @@ body.scene-started .mobile-controls {
 
 @media (pointer: coarse) {
   .desktop-text { display: none; }
-  .mobile-text { display: none; }
-}
-
-@media (max-width: 768px) {
-  .xp-login-area {
-    flex-direction: column;
-    gap: 20px;
-  }
-  .xp-divider {
-    width: 200px;
-    height: 1px;
-    border-right: none;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.15);
-    box-shadow: 0 1px 0 rgba(0, 0, 0, 0.3);
-  }
-  .xp-welcome-text {
-    text-align: center;
-  }
+  .mobile-text { display: inline; }
 }
