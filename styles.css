@@ -561,9 +561,7 @@ body.scene-started .wallpaper-screen {
   visibility: hidden;
 }
 
-/* Shared glassmorphism popup style */
-.attribution-popup,
-.volume-popup {
+.attribution-popup {
   position: absolute;
   bottom: 44px;
   left: 0;
@@ -592,26 +590,9 @@ body.scene-started .wallpaper-screen {
   line-height: 1.5;
 }
 
-.volume-popup {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 10px;
-  width: 52px;
-  padding: 14px 10px;
-  font-size: 11px;
-  font-weight: 600;
-}
-
 .attribution-container:hover .attribution-popup,
 .attribution-btn:focus + .attribution-popup,
 .attribution-popup:focus-within {
-  opacity: 1;
-  pointer-events: auto;
-  transform: translateY(0);
-}
-
-.volume-popup.is-open {
   opacity: 1;
   pointer-events: auto;
   transform: translateY(0);
@@ -796,20 +777,6 @@ body.auto-drive-ui-idle .mobile-controls {
 .attribution-popup a:focus-visible {
   text-decoration: underline;
 }
-
-/* Volume slider — vertical */
-.volume-slider {
-  writing-mode: vertical-lr;
-  direction: rtl;
-  -webkit-appearance: slider-vertical;
-  appearance: slider-vertical;
-  width: 6px;
-  height: 100px;
-  accent-color: #9adeff;
-  cursor: pointer;
-  flex-shrink: 0;
-}
-
 
 /* Mobile Controls */
 .mobile-controls {

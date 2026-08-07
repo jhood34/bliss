@@ -270,8 +270,6 @@ const player = {
   isOnGround: false,
 };
 
-let grassTrail = [];
-let grassTrailCount = 0;
 
 let carGroup = null;
 let carVisualRoot = null;
@@ -354,7 +352,6 @@ let autoDriveUiIdleTimer = null;
 const clock = new THREE.Clock();
 const forward = new THREE.Vector3();
 const right = new THREE.Vector3();
-const move = new THREE.Vector3();
 const cameraFollow = {
   vehicleYaw: 0,
   initialized: false,
