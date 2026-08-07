@@ -1,4 +1,10 @@
 {
+  "name": "a-blissful-drive",
+  "version": "1.0.0",
+  "description": "An AE86 in an endless field of grass. A static WebGL toy built on three.js and Rapier.",
+  "license": "MIT",
+  "author": "Jonty Hood (https://jontyhood.com)",
+  "private": true,
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.12.0",
     "three": "^0.150.1"

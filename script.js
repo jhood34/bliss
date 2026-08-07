@@ -234,7 +234,7 @@ motionBlurPresentationScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mo
 resizeMotionBlurTargets();
 
 const textureLoader = new THREE.TextureLoader();
-const grassAlphaTexture = textureLoader.load("assets/fluffy-grass-alpha.jpeg");
+const grassAlphaTexture = textureLoader.load("assets/grass-alpha.jpeg");
 const grassNoiseTexture = textureLoader.load("assets/perlinnoise.webp");
 grassAlphaTexture.minFilter = THREE.LinearFilter;
 grassAlphaTexture.magFilter = THREE.LinearFilter;
@@ -2121,7 +2121,7 @@ function createGrassBlades() {
   layers.forEach((layer) => {
     layer.depth = layer.depth || layer.zMax - layer.zMin || layer.width;
     layer.segmentCount = chooseGrassTileSegmentCount(layer);
-    const material = createFluffyGrassMaterial(layer);
+    const material = createGrassMaterial(layer);
     grassMaterials.push(material);
     scene.add(createGrassFieldLayer(geometryBySegmentCount, material, layer));
   });
@@ -2129,7 +2129,7 @@ function createGrassBlades() {
 }
 
 function createProceduralBladeGeometry(segments) {
-  // Two crossed cards preserve the fluffy silhouette while cutting one third
+  // Two crossed cards preserve the blade silhouette while cutting one third
   // of grass vertex work before the per-blade shader runs.
   const planeCount = 2;
   const positions = [];
@@ -2686,7 +2686,7 @@ function updateGrassLayerVisibility() {
   }
 }
 
-function createFluffyGrassMaterial(layer) {
+function createGrassMaterial(layer) {
   const material = new THREE.ShaderMaterial({
     side: THREE.DoubleSide,
     transparent: false,
@@ -2870,14 +2870,14 @@ function createFluffyGrassMaterial(layer) {
         vec4 modelPosition = modelMatrix * (instanceMatrix * vec4(localPosition, 1.0));
         modelPosition.xz += worldBendDir * worldPushDist;
 
-        // Wind displacement in world space (FluffyGrass approach)
+        // Wind displacement in world space
         vec2 windDirection = normalize(uWindDirection);
         vec4 noise = texture2D(uNoiseTexture, globalUv + uTime * 0.001);
         float sinWave = sin(50.0 * dot(windDirection, globalUv) + noise.g * 5.5 + uTime * 1.0) * 0.1 * uWindStrength * heightFactor;
         modelPosition.x += sinWave;
         modelPosition.z += sinWave;
 
-        // Height variation from noise (FluffyGrass approach)
+        // Height variation from noise
         modelPosition.y += exp(texture2D(uNoiseTexture, globalUv * uNoiseScale).r) * 0.5 * heightFactor * uGrassHeightMultiplier;
 
         vec4 viewPosition = viewMatrix * modelPosition;
