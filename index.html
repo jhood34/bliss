@@ -223,5 +223,31 @@
       </div>
       <div id="mobile-look-zone" class="mobile-look-zone"></div>
     </div>
+
+    <!-- Embed bridge. Only runs when this page is inside a frame, so playing it
+         standalone is untouched. It listens for Escape without consuming it, to
+         tell the embedding page to close the panel: keys never cross an origin
+         boundary on their own, so the parent cannot hear this itself. -->
+    <script>
+      if (window.parent !== window) {
+        // postMessage only delivers to a matching origin, so unmatched entries
+        // are dropped rather than broadcast.
+        var EMBED_HOSTS = [
+          'https://jontyhood.com',
+          'https://www.jontyhood.com',
+          'http://localhost:8787'
+        ];
+        var tellEmbedder = function (type) {
+          EMBED_HOSTS.forEach(function (origin) {
+            try { window.parent.postMessage({ type: type }, origin); } catch (e) { /* origin not listening */ }
+          });
+        };
+
+        tellEmbedder('embed:ready');
+        window.addEventListener('keydown', function (event) {
+          if (event.key === 'Escape') tellEmbedder('embed:exit');
+        }, { passive: true });
+      }
+    </script>
   </body>
 </html>
