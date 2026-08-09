@@ -899,3 +899,7 @@ body.ui-hidden .preview-unmute {
   opacity: 0;
   pointer-events: none;
 }
+
+.preview-unmute[hidden] {
+  display: none !important;
+}
