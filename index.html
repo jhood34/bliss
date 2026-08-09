@@ -202,7 +202,11 @@
       <a href="https://jontyhood.com" target="_blank" rel="noopener noreferrer" class="footer-text">jonty hood</a>
     </div>
 
-    <audio id="bgm" src="bgm.mp3" loop preload="auto"></audio>
+    <!-- preload="none" so the 2MB track is not fetched before anyone asks for
+         it. Standalone puts preload back to auto as soon as the script runs,
+         so it still buffers ahead the way it used to; embedded, it waits for
+         the volume button. -->
+    <audio id="bgm" src="bgm.mp3" loop preload="none"></audio>
   </main>
 
   <script src="vendor/three.min.js?v=0.150.1"></script>

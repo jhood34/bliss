@@ -108,6 +108,17 @@ if (IS_PREVIEW) {
   sceneSettings.qualityLevel = 1;
 }
 
+// Music starts off in preview, and the file is only fetched once someone asks
+// for it. Standalone restores the old buffer-ahead behaviour immediately.
+if (bgm) {
+  if (IS_PREVIEW) {
+    bgm.muted = true;
+  } else {
+    bgm.preload = "auto";
+    bgm.load();
+  }
+}
+
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(sceneSettings.skyColor);
 scene.fog = new THREE.FogExp2(sceneSettings.fogColor, sceneSettings.fogDensity);
@@ -726,6 +737,10 @@ function initializeVolumeControl() {
     if (bgm) {
       bgm.muted = !bgm.muted;
       updateVolumeIcon(bgm.muted ? 0 : bgm.volume);
+      // In preview nothing has been fetched or started yet, so unmuting is
+      // what kicks it off. Standalone is already playing and startBgm returns
+      // straight back out.
+      if (!bgm.muted) startBgm();
     }
   });
 
@@ -3171,6 +3186,12 @@ async function togglePointerLock() {
 
 function startBgm() {
   if (!bgm || !bgm.paused) {
+    return;
+  }
+
+  // Preview keeps it off until the volume button asks. Playing it muted would
+  // still pull the whole file down, which is the cost being avoided.
+  if (IS_PREVIEW && bgm.muted) {
     return;
   }
 
