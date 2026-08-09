@@ -903,3 +903,31 @@ body.ui-hidden .preview-unmute {
 .preview-unmute[hidden] {
   display: none !important;
 }
+
+.mute-text-switcher {
+  display: inline-grid;
+}
+
+.mute-text-unmute,
+.mute-text-mute {
+  grid-area: 1 / 1;
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+.mute-text-mute {
+  opacity: 0;
+  transform: translateY(4px);
+  pointer-events: none;
+}
+
+.preview-unmute.is-unmuted .mute-text-unmute {
+  opacity: 0;
+  transform: translateY(-4px);
+  pointer-events: none;
+}
+
+.preview-unmute.is-unmuted .mute-text-mute {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}

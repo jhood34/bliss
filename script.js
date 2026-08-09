@@ -742,8 +742,12 @@ function initializeVolumeControl() {
       // what kicks it off. Standalone is already playing and startBgm returns
       // straight back out.
       if (!bgm.muted) startBgm();
-      if (!bgm.muted && previewUnmuteBtn) {
-        previewUnmuteBtn.hidden = true;
+      if (previewUnmuteBtn) {
+        if (!bgm.muted) {
+          previewUnmuteBtn.classList.add("is-unmuted");
+        } else {
+          previewUnmuteBtn.classList.remove("is-unmuted");
+        }
       }
     }
   });
@@ -752,8 +756,13 @@ function initializeVolumeControl() {
     updateVolumeIcon(bgm.muted ? 0 : bgm.volume);
   }
 
-  if (IS_PREVIEW && bgm && bgm.muted && previewUnmuteBtn) {
+  if (IS_PREVIEW && previewUnmuteBtn) {
     previewUnmuteBtn.hidden = false;
+    if (bgm && !bgm.muted) {
+      previewUnmuteBtn.classList.add("is-unmuted");
+    } else {
+      previewUnmuteBtn.classList.remove("is-unmuted");
+    }
     previewUnmuteBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       volumeBtn.click();
