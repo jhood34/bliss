@@ -153,6 +153,13 @@
         </div>
       </div>
 
+      <!-- Preview only, and only while still muted. Clickable as well as
+           spoken: pressing M needs the frame to have keyboard focus, and
+           someone who has not clicked in yet cannot give it that. -->
+      <button id="preview-unmute" class="preview-unmute" type="button" hidden>
+        Press <kbd>M</kbd> to unmute
+      </button>
+
       <div class="volume-container">
         <button id="volume-btn" class="attribution-btn" aria-label="Adjust volume" aria-expanded="false">
           <svg id="volume-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="white" aria-hidden="true">

@@ -19,6 +19,7 @@ const wallpaperEntry = document.querySelector("#wallpaper-entry");
 const bgm = document.querySelector("#bgm");
 const volumeBtn = document.querySelector("#volume-btn");
 const volumeIcon = document.querySelector("#volume-icon");
+const previewUnmuteBtn = document.querySelector("#preview-unmute");
 const settingsBtn = document.querySelector("#settings-btn");
 const autoDriveBtn = document.querySelector("#auto-drive-btn");
 const fullscreenBtn = document.querySelector("#fullscreen-btn");
@@ -741,11 +742,22 @@ function initializeVolumeControl() {
       // what kicks it off. Standalone is already playing and startBgm returns
       // straight back out.
       if (!bgm.muted) startBgm();
+      if (!bgm.muted && previewUnmuteBtn) {
+        previewUnmuteBtn.hidden = true;
+      }
     }
   });
 
   if (bgm) {
     updateVolumeIcon(bgm.muted ? 0 : bgm.volume);
+  }
+
+  if (IS_PREVIEW && bgm && bgm.muted && previewUnmuteBtn) {
+    previewUnmuteBtn.hidden = false;
+    previewUnmuteBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      volumeBtn.click();
+    });
   }
 }
 
@@ -3068,6 +3080,12 @@ function updateDynamicResolution(frameTime) {
 }
 
 function handleKeyDown(event) {
+  if (event.key.toLowerCase() === "m" && !event.repeat && !event.ctrlKey && !event.metaKey && !event.altKey && !isEditableTarget(event.target)) {
+    event.preventDefault();
+    if (volumeBtn) volumeBtn.click();
+    return;
+  }
+
   if (isUiToggleKey(event)) {
     event.preventDefault();
     document.body.classList.toggle("ui-hidden");

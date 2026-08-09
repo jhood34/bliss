@@ -849,3 +849,53 @@ body.scene-started .mobile-controls {
   .desktop-text { display: none; }
   .mobile-text { display: inline; }
 }
+
+/* Preview only: the soundtrack starts off in an embed, so the way back to it
+   has to be said out loud. Sits beside the volume button it stands in for, and
+   goes as soon as the sound is on. */
+.preview-unmute {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.48);
+  border-radius: 16px;
+  background: rgba(18, 35, 40, 0.28);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  color: #ffffff;
+  font-family: inherit;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.2s ease, border-color 0.2s ease, opacity 0.3s ease;
+}
+
+.preview-unmute:hover,
+.preview-unmute:focus-visible {
+  background: rgba(28, 52, 60, 0.5);
+  border-color: rgba(255, 255, 255, 0.75);
+  outline: none;
+}
+
+.preview-unmute kbd {
+  display: inline-grid;
+  place-items: center;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 3px;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.1);
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1;
+}
+
+/* Hidden with the rest of the interface when H is pressed. */
+body.ui-hidden .preview-unmute {
+  opacity: 0;
+  pointer-events: none;
+}
