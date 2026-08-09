@@ -90,6 +90,24 @@ const QUALITY_PRESETS = [
   { name: "Ultra", renderScale: 1, minScale: 0.86, maxScale: 1, grassDistance: 1, highDensityDistance: 1.3, cloudSteps: 80 }
 ];
 
+// Preview is the game running as an embed on another page, or asked for
+// directly with ?preview. A panel on someone else's site should not spin the
+// GPU up to full tilt, so it starts on the cheapest preset and holds 60fps.
+// The slider still works from there: this sets the starting point, not a limit.
+const IS_PREVIEW =
+  window.parent !== window ||
+  new URLSearchParams(window.location.search).has("preview");
+const PREVIEW_MAX_FPS = 60;
+// 60fps also sits inside the dead band of updateDynamicResolution, which only
+// reacts below 50 or above 66, so the adaptive scaler holds still rather than
+// hunting against the cap.
+const previewFrameIntervalMs = IS_PREVIEW ? 1000 / PREVIEW_MAX_FPS : 0;
+let nextPreviewFrameMs = 0;
+
+if (IS_PREVIEW) {
+  sceneSettings.qualityLevel = 1;
+}
+
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(sceneSettings.skyColor);
 scene.fog = new THREE.FogExp2(sceneSettings.fogColor, sceneSettings.fogDensity);
@@ -125,10 +143,14 @@ const renderer = new THREE.WebGLRenderer({
 setRendererColorSpace(renderer);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.04;
+// Seeded from whichever level is the default, so the first frames are already
+// at the right resolution instead of starting mid and being corrected once
+// initializeQualityControl runs.
+const initialQualityPreset = QUALITY_PRESETS[sceneSettings.qualityLevel];
 const renderQuality = {
-  scale: 0.85,
-  minScale: 0.68,
-  maxScale: 0.92,
+  scale: initialQualityPreset.renderScale,
+  minScale: initialQualityPreset.minScale,
+  maxScale: initialQualityPreset.maxScale,
   sampleTime: 0,
   sampleFrames: 0
 };
@@ -4059,6 +4081,20 @@ function animateCarFade() {
 
 function animate() {
   requestAnimationFrame(animate);
+
+  // Dropped before the clock is read, never after: getDelta resets on every
+  // call, so measuring a frame that is then skipped would split the elapsed
+  // time across frames that did no work and leave physics running slow.
+  if (previewFrameIntervalMs > 0) {
+    const now = performance.now();
+    // Half a millisecond of slack, or a display running at exactly 60Hz gets
+    // rounded down to every second frame and lands on 30.
+    if (now + 0.5 < nextPreviewFrameMs) return;
+    // Advance from the target rather than from now, so the cap holds its
+    // average instead of drifting, but never banks up a burst of catch-up
+    // frames after a stall.
+    nextPreviewFrameMs = Math.max(now + 1, nextPreviewFrameMs + previewFrameIntervalMs);
+  }
 
   const rawDelta = clock.getDelta();
   const delta = Math.min(rawDelta, 0.05);
