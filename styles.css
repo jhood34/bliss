@@ -658,7 +658,7 @@ body.auto-drive-ui-idle .mobile-controls {
 .control-scheme {
   position: absolute;
   bottom: 44px;
-  left: 50%;
+  left: calc(50% - 28px);
   display: flex;
   align-items: center;
   gap: 12px;
@@ -667,7 +667,6 @@ body.auto-drive-ui-idle .mobile-controls {
   font-weight: 700;
   line-height: 1;
   letter-spacing: 0.08em;
-  text-transform: uppercase;
   transform: translateX(-50%);
   pointer-events: none;
 }
@@ -728,7 +727,7 @@ body.auto-drive-ui-idle .mobile-controls {
 
 .control-shortcut {
   display: grid;
-  grid-template-columns: 22px minmax(0, 1fr);
+  grid-template-columns: 32px minmax(0, 1fr);
   align-items: center;
   gap: 7px;
   min-width: 0;
@@ -740,6 +739,11 @@ body.auto-drive-ui-idle .mobile-controls {
   height: 22px;
   border-radius: 5px;
   font-size: 10px;
+}
+
+.control-shortcut--escape .control-key {
+  width: 32px;
+  font-size: 8px;
 }
 
 .control-shortcut span {
