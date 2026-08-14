@@ -20,7 +20,7 @@
       document.body.appendChild(d);
     });
   </script>
-  <link rel="stylesheet" href="styles.css?v=controls-9">
+  <link rel="stylesheet" href="styles.css?v=controls-10">
 </head>
 <body>
   <main id="app">
@@ -162,16 +162,25 @@
       </div>
 
       <div class="settings-container">
-        <div class="control-scheme" aria-label="Controls: W A S D to move. H to hide the interface.">
-          <div class="control-scheme__movement" aria-hidden="true">
-            <span class="control-key control-key--forward">W</span>
-            <span class="control-key">A</span>
-            <span class="control-key">S</span>
-            <span class="control-key">D</span>
-          </div>
-          <div class="control-scheme__hide">
-            <kbd class="control-key">H</kbd>
-            <span>hide</span>
+        <div class="control-scheme" aria-label="Keyboard controls: W A S D to move, M to mute or unmute sound, and H to hide the interface.">
+          <span class="control-scheme__title">Keyboard controls</span>
+          <div class="control-scheme__content">
+            <div class="control-scheme__movement" aria-hidden="true">
+              <span class="control-key control-key--forward">W</span>
+              <span class="control-key">A</span>
+              <span class="control-key">S</span>
+              <span class="control-key">D</span>
+            </div>
+            <div class="control-scheme__shortcuts">
+              <div class="control-shortcut">
+                <kbd class="control-key">M</kbd>
+                <span><strong>Sound</strong><small>mute / unmute</small></span>
+              </div>
+              <div class="control-shortcut">
+                <kbd class="control-key">H</kbd>
+                <span><strong>Interface</strong><small>hide / show</small></span>
+              </div>
+            </div>
           </div>
         </div>
         <button id="settings-btn" class="attribution-btn" aria-label="Toggle quality settings" aria-expanded="false">
