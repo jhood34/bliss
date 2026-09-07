@@ -636,6 +636,15 @@ body.auto-drive-ui-idle .mobile-controls {
   pointer-events: none;
 }
 
+body.joystick-driving .bottom-left-controls,
+body.joystick-driving .bottom-right-controls,
+body.joystick-driving .tuning-panel,
+body.joystick-driving .fps-meter,
+body.joystick-driving .quality-control {
+  opacity: 0;
+  pointer-events: none;
+}
+
 .footer-text {
   color: rgba(255, 255, 255, 0.48);
   font-size: 12px;
@@ -963,7 +972,12 @@ body.scene-started .mobile-controls {
   display: none;
 }
 
-@media (pointer: coarse) {
+@media (pointer: coarse), (max-width: 768px) {
+  .control-scheme,
+  .preview-unmute {
+    display: none !important;
+  }
+
   .desktop-text { display: none; }
   .mobile-text { display: inline; }
 }

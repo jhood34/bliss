@@ -448,6 +448,7 @@ const touch = {
   lookLast: new THREE.Vector2(),
   moveVector: new THREE.Vector2()
 };
+let isJoystickDriving = false;
 const fpsStats = {
   frames: 0,
   elapsed: 0,
@@ -494,6 +495,13 @@ async function startScene() {
   canvas.addEventListener("touchmove", handleTouchMove, { passive: false });
   canvas.addEventListener("touchend", handleTouchEnd, { passive: false });
   canvas.addEventListener("touchcancel", handleTouchEnd, { passive: false });
+  window.addEventListener("blur", () => {
+    if (touch.moveId !== null) {
+      touch.moveId = null;
+      touch.moveVector.set(0, 0);
+      setJoystickDriving(false);
+    }
+  });
 
   wallpaperEntry.addEventListener("click", lockPointer);
   canvas.addEventListener("click", togglePointerLock);
@@ -3313,6 +3321,19 @@ function updateDrivingCameraPitchCorrection(delta) {
   }
 }
 
+function setJoystickDriving(active) {
+  if (isJoystickDriving === active) return;
+  isJoystickDriving = active;
+  document.body.classList.toggle("joystick-driving", active);
+  if (active) {
+    if (qualityControl && qualityControl.classList.contains("is-visible")) {
+      qualityControl.classList.remove("is-visible");
+      settingsBtn?.setAttribute("aria-expanded", "false");
+    }
+    setTuningPanelOpen(false);
+  }
+}
+
 function handleTouchStart(event) {
   event.preventDefault();
   document.body.classList.add("scene-started");
@@ -3347,6 +3368,10 @@ function handleTouchMove(event) {
       if (touch.moveVector.lengthSq() > 0.0064) {
         applyDrivingCameraPitch();
       }
+
+      if (touch.moveVector.lengthSq() > 0.0025) {
+        setJoystickDriving(true);
+      }
     }
 
     if (changedTouch.identifier === touch.lookId) {
@@ -3365,6 +3390,7 @@ function handleTouchEnd(event) {
     if (changedTouch.identifier === touch.moveId) {
       touch.moveId = null;
       touch.moveVector.set(0, 0);
+      setJoystickDriving(false);
     }
 
     if (changedTouch.identifier === touch.lookId) {
